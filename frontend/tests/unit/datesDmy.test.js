@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dmyProblem, dmyToIso, isoToDmy, maskDmy } from "../../src/utils/dates";
+import { dmyToIso, isoToDmy, maskDmy } from "../../src/utils/dates";
 
 describe("dd/mm/yyyy dates", () => {
   it("shows a stored date as dd/mm/yyyy", () => {
@@ -30,24 +30,5 @@ describe("dd/mm/yyyy dates", () => {
 
   it("round-trips", () => {
     expect(dmyToIso(isoToDmy("2026-12-31"))).toBe("2026-12-31");
-  });
-});
-
-describe("dmyProblem", () => {
-  it("says nothing for a real date or an empty box", () => {
-    expect(dmyProblem("14/08/2026")).toBe("");
-    expect(dmyProblem("")).toBe("");
-  });
-
-  it("explains a month/day mix-up", () => {
-    expect(dmyProblem("03/19/2026")).toMatch(/no month 19.*19\/03\/2026/);
-  });
-
-  it("asks for the full date when the year is short", () => {
-    expect(dmyProblem("03/19/70")).toMatch(/full date/);
-  });
-
-  it("names an impossible day", () => {
-    expect(dmyProblem("30/02/2026")).toMatch(/February 2026 has no day 30/);
   });
 });

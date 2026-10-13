@@ -121,12 +121,6 @@ managed_event_documents = db["managed_event_documents"]
 # In-flight direct browser-to-R2 uploads (app.services.direct_upload): what the
 # API authorised, so the object can be verified, recorded, or cleaned up.
 upload_sessions = db["upload_sessions"]
-# The research portfolio (routers/research.py): one document per paper,
-# patent, grant ..., its evidence files embedded.
-research_records = db["research_records"]
-# Curated collections of verified records presented to the Dean
-# (routers/research_showcases.py).
-research_showcases = db["research_showcases"]
 
 # Uploaded file bytes are stored in GridFS so that MongoDB remains the single
 # store for the application, including media and documents.
@@ -296,23 +290,6 @@ def ensure_indexes() -> None:
         name="purge_ttl",
         expire_after_seconds=0,
     )
-
-    # A teacher's portfolio, the Dean's queue (oldest first) and the
-    # category / academic-year breakdowns.
-    research_records.create_index(
-        [("faculty_id", ASCENDING), ("updated_at", DESCENDING)],
-        name="faculty_updated",
-    )
-    research_records.create_index(
-        [("verification_status", ASCENDING), ("submitted_at", ASCENDING)],
-        name="verification_submitted",
-    )
-    research_records.create_index([("category", ASCENDING)], name="category")
-    research_records.create_index([("academic_year", ASCENDING)], name="academic_year")
-    # Duplicate detection: any record sharing a DOI, ISBN, patent number ...
-    research_records.create_index([("identifiers", ASCENDING)], name="identifiers")
-    research_showcases.create_index([("owner_id", ASCENDING), ("updated_at", DESCENDING)], name="owner_updated")
-    research_showcases.create_index([("status", ASCENDING), ("sent_at", DESCENDING)], name="status_sent")
 
     # Imported here rather than at module scope: the service imports this
     # module for its collection handle, so a top-level import would cycle.

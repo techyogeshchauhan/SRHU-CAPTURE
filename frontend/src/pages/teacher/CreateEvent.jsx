@@ -40,7 +40,6 @@ import {
   listFacultyCoordinators,
 } from "../../services/directory";
 import TeacherShell from "../../components/teacher/TeacherShell";
-import PageHero from "../../components/teacher/PageHero";
 import { usePanel } from "../../components/teacher/panel";
 import Modal from "../../components/teacher/Modal";
 import RequirementNotice from "../../components/teacher/RequirementNotice";
@@ -197,9 +196,6 @@ function CreateEvent() {
   const panel = usePanel();
   // Event Manager: no Dean. Submitting records the event straight away.
   const direct = !panel.approval;
-  // Laid out like the Dean's pages (compact hero, same heading sizes); the
-  // teacher's wizard keeps its own header.
-  const manager = panel.role === "event_manager";
   const location = useLocation();
   const [searchParams] = useSearchParams();
 
@@ -1050,7 +1046,6 @@ function CreateEvent() {
   const headerBackLabel =
     step > 1 ? `Back to ${STEPS[step - 2].label}` : "Back";
 
-
   // --------------------------------------------------
   // Save draft
   // --------------------------------------------------
@@ -1305,36 +1300,6 @@ function CreateEvent() {
     );
   }
 
-  const stepRail = (
-    <div className="wiz-rail" role="list">
-      {STEPS.map((item, index) => {
-        const number = index + 1;
-        const done = number < step;
-        const reachable = number <= maxStepReached;
-
-        return (
-          <div key={item.key} className="flex items-center" role="listitem">
-            {index > 0 && <span className="wiz-sep" aria-hidden="true" />}
-            <button
-              type="button"
-              onClick={() => reachable && goForwardTo(number)}
-              disabled={!reachable || busy}
-              aria-current={number === step ? "step" : undefined}
-              data-done={done ? "true" : undefined}
-              className="wiz-step"
-            >
-              <i>{done ? <IconCheck className="h-3 w-3" /> : number}</i>
-              <span className={number === step ? "" : "hidden sm:inline"}>
-                {item.label}
-                {((item.key === "images_and_documents" ? (required.photos || required.documents) : required[item.key])) && <span className="req ml-0.5">*</span>}
-              </span>
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
-
   return (
     <TeacherShell
       active="create"
@@ -1357,35 +1322,7 @@ function CreateEvent() {
           scroll: title, step rail and form share one card instead of a hero
           band above it, the fields run three across, and the action bar
           sticks to the bottom of the screen so Next is never out of reach. */}
-      <div
-        className={`mx-auto w-full max-w-6xl ${
-          manager ? "px-5 py-6 sm:px-8" : "px-4 py-4 sm:px-6 lg:px-8"
-        }`}
-      >
-        {/* The Event Manager's pages open as the Dean's do: a back link, then
-            the compact hero -- here with the step rail beside the title. */}
-        {manager && (
-          <>
-            <button
-              type="button"
-              onClick={handleHeaderBack}
-              disabled={busy}
-              className="btn btn-ghost btn-xs mb-4"
-            >
-              <IconArrowLeft />
-              {headerBackLabel}
-            </button>
-            <div className="mb-4">
-              <PageHero
-                compact
-                toolbar
-                title={heroCopy.title}
-                accent={heroCopy.accent}
-                actions={stepRail}
-              />
-            </div>
-          </>
-        )}
+      <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 lg:px-8">
 
         {/* Dean's feedback on a rejected event — the one thing that has to be
             read before anything below it is touched. */}
@@ -1428,37 +1365,60 @@ function CreateEvent() {
         {/* ------------------------------------------------------------ form */}
         <form onSubmit={handleSubmit} className="glass overflow-clip">
 
-          {/* --------------------------------------- title + step rail
-              (the Event Manager has them in the hero above instead) */}
-          {!manager && (
-            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b hairline px-4 py-3.5 sm:px-6">
-              <div className="flex min-w-0 items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleHeaderBack}
-                  disabled={busy}
-                  className="icon-btn icon-btn-sm shrink-0"
-                  aria-label={headerBackLabel}
-                  title={headerBackLabel}
-                >
-                  <IconArrowLeft />
-                </button>
-                <div className="min-w-0">
-                  <p className="eyebrow text-[11px]">{heroCopy.eyebrow}</p>
-                  <h1 className="truncate font-display text-xl font-bold leading-tight text-ink" title={heroCopy.subtitle}>
-                    {heroCopy.title} <span className="hero-accent">{heroCopy.accent}</span>
-                  </h1>
-                </div>
+          {/* --------------------------------------- title + step rail */}
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b hairline px-4 py-3.5 sm:px-6">
+            <div className="flex min-w-0 items-center gap-3">
+              <button
+                type="button"
+                onClick={handleHeaderBack}
+                disabled={busy}
+                className="icon-btn icon-btn-sm shrink-0"
+                aria-label={headerBackLabel}
+                title={headerBackLabel}
+              >
+                <IconArrowLeft />
+              </button>
+              <div className="min-w-0">
+                <p className="eyebrow text-[11px]">{heroCopy.eyebrow}</p>
+                <h1 className="truncate font-display text-xl font-bold leading-tight text-ink" title={heroCopy.subtitle}>
+                  {heroCopy.title} <span className="hero-accent">{heroCopy.accent}</span>
+                </h1>
               </div>
-
-              {stepRail}
             </div>
-          )}
+
+            <div className="wiz-rail" role="list">
+              {STEPS.map((item, index) => {
+                const number = index + 1;
+                const done = number < step;
+                const reachable = number <= maxStepReached;
+
+                return (
+                  <div key={item.key} className="flex items-center" role="listitem">
+                    {index > 0 && <span className="wiz-sep" aria-hidden="true" />}
+                    <button
+                      type="button"
+                      onClick={() => reachable && goForwardTo(number)}
+                      disabled={!reachable || busy}
+                      aria-current={number === step ? "step" : undefined}
+                      data-done={done ? "true" : undefined}
+                      className="wiz-step"
+                    >
+                      <i>{done ? <IconCheck className="h-3 w-3" /> : number}</i>
+                      <span className={number === step ? "" : "hidden sm:inline"}>
+                        {item.label}
+                        {((item.key === "images_and_documents" ? (required.photos || required.documents) : required[item.key])) && <span className="req ml-0.5">*</span>}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
           {/* One line for what used to be a three-line band. The step count
               lives here so it survives the rail scrolling on a phone. */}
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b hairline bg-line/2 px-4 py-2.5 sm:px-6">
-            <h2 className={manager ? "h3 text-base text-ink" : "text-sm font-semibold text-ink"}>
+            <h2 className="text-sm font-semibold text-ink">
               {step === 1 && "Event Information"}
               {step === 2 && (
                 <>
@@ -1799,7 +1759,7 @@ function CreateEvent() {
                       : null
                   }
                   usedBytes={photoBytesUsed}
-                  maxSizeLabel={`JPG, PNG, WEBP or GIF up to ${formatMb(uploadLimits.max_photo_size_mb * 1024 * 1024)} each${uploadLimits.max_photo_total_mb ? ` · ${formatMb(uploadLimits.max_photo_total_mb * 1024 * 1024)} total` : ""}`}
+                  maxSizeLabel={`JPG, PNG, WebP or GIF up to ${formatMb(uploadLimits.max_photo_size_mb * 1024 * 1024)} each${uploadLimits.max_photo_total_mb ? ` · ${formatMb(uploadLimits.max_photo_total_mb * 1024 * 1024)} total` : ""}`}
                   emptyLabel="Drag photos here"
                   hint="Posters, banners, and photographs of the event."
                   disabled={busy}

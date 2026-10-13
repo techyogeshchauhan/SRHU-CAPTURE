@@ -17,7 +17,6 @@ import {
   IconAlertTriangle,
   IconArchive,
   IconArrowLeft,
-  IconActivity,
   IconArrowRight,
   IconBuilding,
   IconCalendar,
@@ -37,6 +36,7 @@ import {
   IconUser,
   IconUsers,
   IconX,
+  RidgeDivider,
 } from "../../components/teacher/icons";
 import {
   canApprove,
@@ -52,14 +52,6 @@ import {
 } from "../../utils/constants";
 import { formatDateRange, formatTime12h } from "../../utils/dates";
 import { readEventFields } from "../../utils/eventFields";
-import { availabilityFromFiles, reportModalProps } from "../../utils/reportAvailability";
-
-// An optional field left blank -- or a bare 0, as an empty participant count
-// arrives -- is left off the page rather than shown as "Not provided" or "0".
-const hasValue = (value) => {
-  const text = value == null ? "" : String(value).trim();
-  return text !== "" && text !== "0";
-};
 
 function EventDetails() {
   const { eventId } = useParams();
@@ -80,6 +72,9 @@ function EventDetails() {
   const [reportGenerated, setReportGenerated] = useState(false);
   const [generatedAt, setGeneratedAt] = useState(null);
   const [showReportModal, setShowReportModal] = useState(false);
+
+  const [socialNetworkUrl, setSocialNetworkUrl] = useState("");
+  const [savingSocialLink, setSavingSocialLink] = useState(false);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -146,6 +141,10 @@ function EventDetails() {
 
       setReportGenerated(Boolean(data?.report_generated));
       setGeneratedAt(data?.generated_at || null);
+
+      if (data?.social_network_url) {
+        setSocialNetworkUrl(data.social_network_url);
+      }
     } catch (err) {
       console.error("Load report status error:", err);
     }
@@ -179,6 +178,7 @@ function EventDetails() {
       }
 
       setEvent(foundEvent);
+      setSocialNetworkUrl(foundEvent.social_network_url || "");
 
       await loadReportStatus(eventId);
     } catch (err) {
@@ -432,6 +432,43 @@ function EventDetails() {
   };
 
   // ============================================================
+  // SAVE SOCIAL NETWORK LINK
+  // ============================================================
+
+  const handleSaveSocialLink = async () => {
+    if (!event) return;
+
+    try {
+      setSavingSocialLink(true);
+      setError("");
+      setSuccess("");
+
+      const data = await apiJson(`/dean/events/${event.id}/social-link`, {
+        method: "PATCH",
+        body: { social_network_url: socialNetworkUrl.trim() },
+      });
+
+      setSocialNetworkUrl(data.social_network_url);
+
+      setEvent((previous) => ({
+        ...previous,
+        social_network_url: data.social_network_url,
+      }));
+
+      // Existing report becomes invalid
+      // because social link changed.
+      setReportGenerated(false);
+      setGeneratedAt(null);
+
+      setSuccess("Social Network Link saved successfully.");
+    } catch (err) {
+      handleApiError(err, "Failed to save Social Network Link", "Save social link error");
+    } finally {
+      setSavingSocialLink(false);
+    }
+  };
+
+  // ============================================================
   // GENERATE REPORT
   // ============================================================
 
@@ -541,7 +578,7 @@ function EventDetails() {
   if (error && !event) {
     return (
       <DeanShell active="events" profile={deanProfile} onLogout={handleLogout}>
-        <div className="mx-auto w-full max-w-wrap px-5 py-6 sm:px-8">
+        <div className="mx-auto w-full max-w-wrap px-5 py-8 sm:px-8">
           <div
             className="flex flex-col items-center rounded-2xl border px-6 py-14 text-center"
             data-tint=""
@@ -640,128 +677,48 @@ function EventDetails() {
       ? `${formatTime12h(meta.startTime) || "?"}${
           meta.endTime ? ` – ${formatTime12h(meta.endTime)}` : ""
         }`
-      : "";
+      : "Not set";
 
-  // A teacher submits an event for approval; an Event Manager records one.
-  const submitter = submitterOf(event);
-  const submittedStamp = submitter.isManager
-    ? event.recorded_at || event.created_at
-    : event.submitted_at || event.created_at;
-  // Photos get the full width; videos (usually one or two) share a row with
-  // the documents rather than leaving most of a full-width card empty.
-  const isVideoItem = (item) => String(item?.media_type || "").toLowerCase() === "video";
-  const photoItems = media.filter((item) => !isVideoItem(item));
-  const videoItems = media.filter(isVideoItem);
-  const hasVideos = videoItems.length > 0;
-  const hasDocuments = documents.length > 0;
-  const pairFiles = hasVideos && hasDocuments;
-
-  const submitterEmail =
-    event.teacher_email && event.teacher_email !== submitter.name ? event.teacher_email : "";
-
-  // Everything the Dean checks about the event itself, in one grid in the
-  // hero. It used to be split between the hero and an "Event information"
-  // card of its own, which pushed the evidence and the decision below the
-  // fold. Fields the submitter left blank are dropped; the long ones span two
-  // columns so they wrap less.
+  // The hero's four facts: what the Dean checks first, in the order they ask.
   const facts = [
     {
       label: event.end_date ? "Dates" : "Date",
       value: formatDateRange(event.event_date, event.end_date),
       Icon: IconCalendar,
     },
+    { label: "Venue", value: event.location || "Not set", Icon: IconMapPin },
     { label: "Time", value: timeRange, Icon: IconClock },
-    { label: "Venue", value: event.location, Icon: IconMapPin, wide: true },
-    { label: "Organizer", value: meta.organizer, Icon: IconUser },
-    { label: "Department", value: meta.department, Icon: IconBuilding },
-    { label: "Contact", value: meta.contactInfo, Icon: IconPhone },
-    { label: "Participants", value: meta.expectedParticipants, Icon: IconUsers },
     {
-      label: "Social link",
-      value: event.social_network_url,
-      href: event.social_network_url,
-      Icon: IconTag,
-      wide: true,
+      label: "Organizer",
+      value: meta.organizer || "Not provided",
+      Icon: IconUser,
     },
-  ].filter((fact) => hasValue(fact.value));
+  ];
 
-  // Every submission, decision and remark. It closes the rail, unless the
-  // event has no description, media or documents -- then the left column
-  // would stand empty while the rail ran on, so it goes there instead.
-  const hasEvidence = hasValue(cleanDescription) || media.length > 0 || hasDocuments;
-  const progressCard = (
-    <section className="glass overflow-hidden">
-      <div className="flex items-center gap-2.5 border-b hairline px-5 py-3.5">
-        <span className="icon-tile h-8 w-8 shrink-0 rounded-lg">
-          <IconActivity className="h-4 w-4" />
-        </span>
-        <div className="min-w-0">
-          <h2 className="h3 text-base text-ink">Event progress</h2>
-          <p className="prose-muted text-xs">
-            Every submission, decision and remark, oldest first.
-          </p>
-        </div>
-      </div>
+  // A teacher submits an event for approval; an Event Manager records one.
+  const submitter = submitterOf(event);
+  const submittedStamp = submitter.isManager
+    ? event.recorded_at || event.created_at
+    : event.submitted_at || event.created_at;
 
-      <div className="px-5 py-4">
-        <ProgressTimeline
-          event={event}
-          viewerId={deanProfile?.id}
-          perspective="dean"
-        />
-
-        {/* PRD 18: the two directions were an unlabelled row of
-            buttons, so it was not obvious which one moved the event
-            forward or what the teacher would see. They are now two
-            labelled groups, each saying what it does. */}
-        {(nextStage || previousStage) && (
-          <div className="mt-5 space-y-4 border-t hairline pt-5">
-            <p className="rail-label">Move this event</p>
-
-            {nextStage && (
-              <div>
-                <button
-                  type="button"
-                  onClick={() => handleChangeStage(nextStage.key)}
-                  disabled={stageSaving}
-                  className="btn btn-brand btn-xs"
-                >
-                  {stageSaving ? (
-                    <span className="spin h-3.5 w-3.5" />
-                  ) : (
-                    <IconArrowRight />
-                  )}
-                  {stageSaving ? "Saving…" : nextStage.label}
-                </button>
-                <p className="prose-muted mt-1.5 text-xs">
-                  Advances the event. The teacher is notified and sees
-                  it as “{nextStage.label}”.
-                </p>
-              </div>
-            )}
-
-            {previousStage && (
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setStageBack(previousStage)}
-                  disabled={stageSaving}
-                  className="btn btn-ghost btn-xs"
-                >
-                  <IconArrowLeft />
-                  {previousStage.label}
-                </button>
-                <p className="prose-muted mt-1.5 text-xs">
-                  Steps the event back. Use this only to undo a stage
-                  set by mistake — the teacher is notified of that too.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </section>
-  );
+  const details = [
+    {
+      label: submitter.verb,
+      value: `${submitter.name} (${submitter.role})${event.teacher_email && event.teacher_email !== submitter.name ? ` · ${event.teacher_email}` : ""}`,
+      Icon: IconUser,
+    },
+    {
+      label: "Department",
+      value: meta.department || "Not provided",
+      Icon: IconBuilding,
+    },
+    {
+      label: "Expected participants",
+      value: meta.expectedParticipants || "Not provided",
+      Icon: IconUsers,
+    },
+    { label: "Contact", value: meta.contactInfo || "Not provided", Icon: IconPhone },
+  ];
 
   return (
     <DeanShell active="events" profile={deanProfile} onLogout={handleLogout}>
@@ -800,51 +757,49 @@ function EventDetails() {
         )}
       </div>
 
-      <div className="mx-auto w-full max-w-wrap px-5 py-6 sm:px-8">
+      <div className="mx-auto w-full max-w-wrap px-5 py-8 sm:px-8">
 
-        <Link to="/dean/events" className="btn btn-ghost btn-xs mb-4">
+        <Link to="/dean/events" className="btn btn-ghost btn-xs mb-5">
           <IconArrowLeft />
           Back to all events
         </Link>
 
         {/* -------------------------------------------------------- the hero */}
         <PageHero
-          compact
           eyebrow={event.event_type || "Program"}
           title={event.event_name}
-          subtitle={`${submitter.verb} ${submitter.name} (${submitter.role})${
-            submitterEmail ? ` · ${submitterEmail}` : ""
-          } · ${formatStamp(submittedStamp)}`}
-          actions={<StatusChip status={event.status} size="md" />}
-        >
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 border-t hairline pt-4 lg:grid-cols-4">
-            {facts.map((fact) => (
-              <div
-                key={fact.label}
-                className={`flex min-w-0 items-start gap-2.5 ${fact.wide ? "col-span-2" : ""}`}
+          subtitle={`${submitter.verb} ${submitter.name} (${submitter.role}) · ${formatStamp(submittedStamp)}`}
+          actions={
+            <div className="flex items-center gap-2">
+              <StatusChip status={event.status} size="md" />
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmText("");
+                  setDeleteConfirmOpen(true);
+                }}
+                disabled={processing || deleting}
+                className="btn btn-ghost btn-xs text-err hover:bg-err/10"
+                title="Delete this event permanently"
               >
-                <span className="icon-tile h-8 w-8 shrink-0 rounded-lg">
+                <IconTrash />
+                Delete
+              </button>
+            </div>
+          }
+        >
+          <dl className="grid gap-4 border-t hairline pt-5 sm:grid-cols-2 lg:grid-cols-4">
+            {facts.map((fact) => (
+              <div key={fact.label} className="flex items-center gap-3">
+                <span className="icon-tile h-9 w-9 rounded-xl">
                   <fact.Icon className="h-4 w-4" />
                 </span>
                 <div className="min-w-0">
                   <dt className="text-[11px] font-semibold uppercase tracking-[.12em] text-muted">
                     {fact.label}
                   </dt>
-                  {/* Wraps rather than truncates: a venue like "LT-06 &
-                      Computer Lab-06, …" has to be read in full. */}
-                  <dd className="wrap-break-word text-sm font-medium text-ink">
-                    {fact.href ? (
-                      <a
-                        href={fact.href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="link break-all"
-                      >
-                        {fact.value}
-                      </a>
-                    ) : (
-                      fact.value
-                    )}
+                  <dd className="truncate text-sm font-medium text-ink" title={fact.value}>
+                    {fact.value}
                   </dd>
                 </div>
               </div>
@@ -854,133 +809,365 @@ function EventDetails() {
 
         {/* ====================================================
             TWO-COLUMN BODY
-            Left: the evidence.  Right: the decision and the report first,
-            then the history -- so both actions sit on the first screen.
+            Left: the evidence.  Right: the decision, always in view.
         ==================================================== */}
-        <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-12">
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
 
           {/* ================= LEFT ================= */}
-          <div className="space-y-5 lg:col-span-8">
+          <div className="space-y-6 lg:col-span-8">
+
+            {/* ---------------------------------------- coordination info */}
+            <section className="glass p-6">
+              <p className="eyebrow">Coordination</p>
+              <h2 className="h3 mt-1 border-b hairline pb-4 text-ink">
+                Event information
+              </h2>
+
+              <dl className="mt-5 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                {details.map((item) => (
+                  <div key={item.label} className="flex items-start gap-3">
+                    <span className="icon-tile h-9 w-9 rounded-xl">
+                      <item.Icon className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <dt className="text-xs font-medium text-muted">{item.label}</dt>
+                      <dd className="mt-0.5 wrap-break-word text-sm font-semibold text-ink">
+                        {item.value}
+                      </dd>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="flex items-start gap-3 sm:col-span-2 lg:col-span-3">
+                  <span className="icon-tile h-9 w-9 rounded-xl">
+                    <IconTag className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <dt className="text-xs font-medium text-muted">
+                      Social network link
+                    </dt>
+                    <dd className="mt-0.5">
+                      {event.social_network_url ? (
+                        <a
+                          href={event.social_network_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="link block truncate text-sm font-semibold"
+                        >
+                          {event.social_network_url}
+                        </a>
+                      ) : (
+                        <span className="text-sm text-muted italic">Not provided</span>
+                      )}
+                    </dd>
+                  </div>
+                </div>
+              </dl>
+            </section>
 
             {/* ------------------------------------------------ description */}
-            {hasValue(cleanDescription) && (
-              <section className="glass overflow-hidden">
-                <div className="flex items-center gap-2.5 border-b hairline px-5 py-3.5">
-                  <span className="icon-tile h-8 w-8 rounded-lg">
+            <section className="glass overflow-hidden">
+              <div className="border-b hairline px-6 py-5">
+                <p className="eyebrow">Proposal</p>
+                <h2 className="h3 mt-1 text-ink">Event description</h2>
+              </div>
+              <p className="prose-muted whitespace-pre-line px-6 py-5 text-sm">
+                {cleanDescription || "No description provided."}
+              </p>
+            </section>
+
+            {/* ------------------------------------------ photos and videos */}
+            {/* Two dedicated cards showing every item. They used to share one
+                height-capped tab, where videos hid below a few photos. */}
+            <EventMediaSections
+              items={media}
+              eventName={event.event_name || "Event"}
+              onLoadError={refreshMediaLinks}
+            />
+
+            {/* ---------------------------------------------------- documents */}
+            <section className="glass overflow-hidden">
+              <div className="flex items-center justify-between gap-3 border-b hairline px-6 py-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="icon-tile h-9 w-9 rounded-lg">
                     <IconFileText className="h-4 w-4" />
                   </span>
-                  <h2 className="h3 text-base text-ink">Event description</h2>
+                  <h2 className="h3 text-base text-ink">Documents</h2>
                 </div>
-                <p className="prose-muted whitespace-pre-line px-5 py-4 text-sm">
-                  {cleanDescription}
+                <span className="chip chip-sm chip-solid num">{documents.length}</span>
+              </div>
+
+              <div className="p-5">
+                {documents.length === 0 ? (
+                  <p className="prose-muted rounded-xl border border-dashed border-line/20 p-6 text-center text-sm">
+                    No supporting documents uploaded.
+                  </p>
+                ) : (
+                  <ul className="max-h-85 space-y-2.5 overflow-y-auto">
+                    {documents.map((document) => (
+                      <li
+                        key={document.id}
+                        className="flex items-center justify-between gap-3 rounded-xl border hairline bg-raised/40 p-3"
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="icon-tile h-9 w-9 rounded-lg">
+                            <IconFileText className="h-4 w-4" />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-semibold text-ink">
+                              {document.file_name}
+                            </p>
+                            <p className="text-[10px] text-muted">
+                              {document.file_type || "File"}
+                              {document.file_size
+                                ? ` · ${(document.file_size / 1024).toFixed(0)} KB`
+                                : ""}
+                            </p>
+                          </div>
+                        </div>
+
+                        <a
+                          href={document.file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-ghost btn-xs shrink-0"
+                        >
+                          <IconExternalLink />
+                          Open
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+
+            {/* ---- Report (post-approval only) ---- */}
+            {/* Reports assert a live approval, and the server refuses to
+                generate one for an archived event, so the panel goes too. */}
+            {isApproved && !archived && (
+              <>
+                <RidgeDivider className="divider" />
+
+                <section className="glass overflow-hidden">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b hairline px-6 py-5">
+                    <div className="flex items-center gap-3">
+                      <span className="icon-tile">
+                        <IconFileText />
+                      </span>
+                      <div>
+                        <p className="eyebrow">Output</p>
+                        <h2 className="h3 text-ink">Event report</h2>
+                      </div>
+                    </div>
+
+                    {canReport && reportGenerated && (
+                      <span
+                        className="chip chip-track"
+                        style={{ "--track": trackOf("approved") }}
+                      >
+                        <span className="dot dot-sm" />
+                        Generated
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-5 px-6 py-5">
+                    <div className="field">
+                      <label htmlFor="reportSocialLink">
+                        Social network link
+                        <span className="ml-2 font-normal text-muted">(Optional)</span>
+                      </label>
+
+                      <div className="flex flex-wrap gap-2.5">
+                        <input
+                          id="reportSocialLink"
+                          type="url"
+                          value={socialNetworkUrl}
+                          onChange={(e) => setSocialNetworkUrl(e.target.value)}
+                          placeholder="https://instagram.com/your-event"
+                          disabled={savingSocialLink}
+                          className="input min-w-0 flex-1"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveSocialLink}
+                          disabled={savingSocialLink}
+                          className="btn btn-ghost btn-sm shrink-0"
+                        >
+                          {savingSocialLink && <span className="spin h-3.5 w-3.5" />}
+                          {savingSocialLink ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+
+                      {!socialNetworkUrl.trim() && (
+                        <p className="prose-muted text-xs">
+                          Added to the generated report when present. The report
+                          can be generated without it.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2.5 border-t hairline pt-5">
+                      <button
+                        type="button"
+                        onClick={handleOpenReportModal}
+                        disabled={reportLoading || !canReport}
+                        className="btn btn-brand btn-sm flex-1"
+                      >
+                        {reportLoading ? (
+                          <span className="spin h-3.5 w-3.5" />
+                        ) : (
+                          <IconRefresh />
+                        )}
+                        {reportLoading
+                          ? "Processing…"
+                          : reportGenerated
+                          ? "Customize & Regenerate"
+                          : "Generate Report"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleDownloadReport}
+                        disabled={reportLoading || !reportGenerated || !canReport}
+                        className="btn btn-ghost btn-sm flex-1"
+                      >
+                        <IconDownload />
+                        Download
+                      </button>
+                    </div>
+
+                    {!canReport && (
+                      <p className="prose-muted text-xs" role="note">
+                        The report can be generated once the event is marked
+                        Completed.
+                      </p>
+                    )}
+
+                    {canReport && generatedAt && (
+                      <p className="num text-[11px] text-muted">
+                        Last generated {formatStamp(generatedAt)}
+                      </p>
+                    )}
+                  </div>
+                </section>
+              </>
+            )}
+          </div>
+
+          {/* ================= RIGHT: sticky decision rail ================= */}
+          <aside className="space-y-6 lg:col-span-4 lg:sticky lg:top-[calc(var(--header-h)+1.5rem)] lg:self-start">
+
+            {/* ---- Progress / workflow ---- */}
+            <section className="glass overflow-hidden">
+              <div className="border-b hairline px-6 py-5">
+                <p className="eyebrow">Tracking</p>
+                <h2 className="h3 mt-1 text-ink">Event progress</h2>
+                <p className="prose-muted mt-0.5 text-xs">
+                  Every submission, decision and remark, oldest first.
+                </p>
+              </div>
+
+              <div className="px-6 py-5">
+                <ProgressTimeline
+                  event={event}
+                  viewerId={deanProfile?.id}
+                  perspective="dean"
+                />
+
+                {/* PRD 18: the two directions were an unlabelled row of
+                    buttons, so it was not obvious which one moved the event
+                    forward or what the teacher would see. They are now two
+                    labelled groups, each saying what it does. */}
+                {(nextStage || previousStage) && (
+                  <div className="mt-5 space-y-4 border-t hairline pt-5">
+                    <p className="rail-label">Move this event</p>
+
+                    {nextStage && (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => handleChangeStage(nextStage.key)}
+                          disabled={stageSaving}
+                          className="btn btn-brand btn-xs"
+                        >
+                          {stageSaving ? (
+                            <span className="spin h-3.5 w-3.5" />
+                          ) : (
+                            <IconArrowRight />
+                          )}
+                          {stageSaving ? "Saving…" : nextStage.label}
+                        </button>
+                        <p className="prose-muted mt-1.5 text-xs">
+                          Advances the event. The teacher is notified and sees
+                          it as “{nextStage.label}”.
+                        </p>
+                      </div>
+                    )}
+
+                    {previousStage && (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => setStageBack(previousStage)}
+                          disabled={stageSaving}
+                          className="btn btn-ghost btn-xs"
+                        >
+                          <IconArrowLeft />
+                          {previousStage.label}
+                        </button>
+                        <p className="prose-muted mt-1.5 text-xs">
+                          Steps the event back. Use this only to undo a stage
+                          set by mistake — the teacher is notified of that too.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* ---- Rejection reason ---- */}
+            {rejected && refusalReason && (
+              <section
+                className="overflow-hidden rounded-2xl border"
+                data-tint=""
+                style={{ "--track": trackOf(event.status) }}
+              >
+                <div
+                  className="flex items-center gap-2.5 border-b px-6 py-4"
+                  style={{
+                    borderColor: "color-mix(in srgb, var(--track) 22%, transparent)",
+                  }}
+                >
+                  <IconAlertTriangle
+                    className="h-5 w-5 shrink-0"
+                    style={{ color: trackOf(event.status) }}
+                  />
+                  <h2 className="h3 text-base text-ink">
+                    {event.status === "revoked" ? "Revocation reason" : "Rejection reason"}
+                  </h2>
+                </div>
+
+                <p className="whitespace-pre-wrap px-6 py-5 text-sm leading-6 text-ink">
+                  {refusalReason}
                 </p>
               </section>
             )}
 
-            {/* ------------------------------------------ photos and videos */}
-            {/* Two dedicated cards showing every item. They used to share one
-                height-capped tab, where videos hid below a few photos. A kind
-                with nothing uploaded is left out rather than shown as 0. Five
-                thumbnails a row on a desktop, so a full set of photos takes
-                two short rows rather than four tall ones. */}
-            <EventMediaSections
-              items={photoItems}
-              eventName={event.event_name || "Event"}
-              columns="grid-cols-3 sm:grid-cols-4 lg:grid-cols-5"
-              onLoadError={refreshMediaLinks}
-              hideEmpty
-            />
-
-            {/* ----------------------------------------- videos + documents */}
-            {(hasVideos || hasDocuments) && (
-              <div className={`grid gap-5 ${pairFiles ? "md:grid-cols-2" : ""}`}>
-                <EventMediaSections
-                  items={videoItems}
-                  eventName={event.event_name || "Event"}
-                  columns={pairFiles ? "grid-cols-3 md:grid-cols-2" : "grid-cols-3 sm:grid-cols-4 lg:grid-cols-5"}
-                  onLoadError={refreshMediaLinks}
-                  hideEmpty
-                />
-
-                {hasDocuments && (
-                  <section className="glass overflow-hidden">
-                    <div className="flex items-center justify-between gap-3 border-b hairline px-5 py-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <span className="icon-tile h-8 w-8 rounded-lg">
-                          <IconFileText className="h-4 w-4" />
-                        </span>
-                        <h2 className="h3 text-base text-ink">Documents</h2>
-                      </div>
-                      <span className="chip chip-sm chip-solid num">{documents.length}</span>
-                    </div>
-
-                    {/* Two a row when the card has the full width: a file is
-                        one short line. */}
-                    <ul
-                      className={`grid max-h-85 gap-2.5 overflow-y-auto p-4 ${
-                        pairFiles ? "" : "sm:grid-cols-2"
-                      }`}
-                    >
-                      {documents.map((document) => (
-                        <li
-                          key={document.id}
-                          className="flex items-center justify-between gap-3 rounded-xl border hairline bg-raised/40 p-2.5"
-                        >
-                          <div className="flex min-w-0 items-center gap-2.5">
-                            <span className="icon-tile h-8 w-8 shrink-0 rounded-lg">
-                              <IconFileText className="h-4 w-4" />
-                            </span>
-                            <div className="min-w-0">
-                              <p className="truncate text-xs font-semibold text-ink" title={document.file_name}>
-                                {document.file_name}
-                              </p>
-                              <p className="text-[10px] text-muted">
-                                {document.file_type || "File"}
-                                {document.file_size
-                                  ? ` · ${(document.file_size / 1024).toFixed(0)} KB`
-                                  : ""}
-                              </p>
-                            </div>
-                          </div>
-
-                          <a
-                            href={document.file_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="btn btn-ghost btn-xs shrink-0"
-                          >
-                            <IconExternalLink />
-                            Open
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-              </div>
-            )}
-
-            {/* With nothing optional added the evidence column would be
-                empty, so the history fills it instead of the rail. */}
-            {!hasEvidence && progressCard}
-          </div>
-
-          {/* ================= RIGHT: decision rail ================= */}
-          {/* Not sticky: with the report in it the rail is as long as the
-              evidence column, and a sticky column taller than the screen
-              hides its own foot until the page ends. Decision and report now
-              lead it instead, so they are on the first screen anyway. */}
-          <aside className="space-y-5 lg:col-span-4">
-
             {/* ---- Decision (or, while archived, the way back) ---- */}
-            <section className="glass p-5">
-              <div className="flex items-center gap-2.5">
-                <span className="icon-tile h-8 w-8 rounded-lg">
-                  {archived ? <IconArchive className="h-4 w-4" /> : <IconShield className="h-4 w-4" />}
+            <section className="glass p-6">
+              <div className="flex items-center gap-3">
+                <span className="icon-tile">
+                  {archived ? <IconArchive /> : <IconShield />}
                 </span>
-                <h2 className="h3 text-base text-ink">
-                  {archived ? "This event is archived" : "Dean decision"}
-                </h2>
+                <div>
+                  <p className="eyebrow">{archived ? "Archived" : "Decision"}</p>
+                  <h2 className="h3 text-ink">
+                    {archived ? "This event is archived" : "Dean decision"}
+                  </h2>
+                </div>
               </div>
 
               {archived && (
@@ -1031,7 +1218,7 @@ function EventDetails() {
               </p>
               )}
 
-              <div className={`mt-4 flex-wrap gap-2.5 ${archived ? "hidden" : "flex"}`}>
+              <div className={`mt-5 flex-wrap gap-2.5 ${archived ? "hidden" : "flex"}`}>
                 {canApprove(event) && (
                   <button
                     type="button"
@@ -1098,109 +1285,6 @@ function EventDetails() {
                 </div>
               </div>
             </section>
-            {/* ---- Rejection reason ---- */}
-            {rejected && refusalReason && (
-              <section
-                className="overflow-hidden rounded-2xl border"
-                data-tint=""
-                style={{ "--track": trackOf(event.status) }}
-              >
-                <div
-                  className="flex items-center gap-2.5 border-b px-6 py-4"
-                  style={{
-                    borderColor: "color-mix(in srgb, var(--track) 22%, transparent)",
-                  }}
-                >
-                  <IconAlertTriangle
-                    className="h-5 w-5 shrink-0"
-                    style={{ color: trackOf(event.status) }}
-                  />
-                  <h2 className="h3 text-base text-ink">
-                    {event.status === "revoked" ? "Revocation reason" : "Rejection reason"}
-                  </h2>
-                </div>
-
-                <p className="whitespace-pre-wrap px-6 py-5 text-sm leading-6 text-ink">
-                  {refusalReason}
-                </p>
-              </section>
-            )}
-
-            {/* ---- Report (post-approval only) ---- */}
-            {/* Reports assert a live approval, and the server refuses to
-                generate one for an archived event, so the panel goes too. */}
-            {isApproved && !archived && (
-              <section className="glass overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b hairline px-5 py-3.5">
-                  <div className="flex items-center gap-2.5">
-                    <span className="icon-tile h-8 w-8 rounded-lg">
-                      <IconFileText className="h-4 w-4" />
-                    </span>
-                    <h2 className="h3 text-base text-ink">Event report</h2>
-                  </div>
-
-                  {canReport && reportGenerated && (
-                    <span
-                      className="chip chip-sm chip-track"
-                      style={{ "--track": trackOf("approved") }}
-                    >
-                      <span className="dot dot-sm" />
-                      Generated
-                    </span>
-                  )}
-                </div>
-
-                <div className="space-y-3 p-5">
-                  {/* Sized from their labels, not split 50/50: in the rail
-                      "Customize & Regenerate" does not fit half the width,
-                      so the pair wraps to two rows instead of clipping. */}
-                  <div className="flex flex-wrap gap-2.5">
-                    <button
-                      type="button"
-                      onClick={handleOpenReportModal}
-                      disabled={reportLoading || !canReport}
-                      className="btn btn-brand btn-sm flex-[1_1_auto]"
-                    >
-                      {reportLoading ? (
-                        <span className="spin h-3.5 w-3.5" />
-                      ) : (
-                        <IconRefresh />
-                      )}
-                      {reportLoading
-                        ? "Processing…"
-                        : reportGenerated
-                        ? "Customize & Regenerate"
-                        : "Generate Report"}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleDownloadReport}
-                      disabled={reportLoading || !reportGenerated || !canReport}
-                      className="btn btn-ghost btn-sm flex-[1_1_auto]"
-                    >
-                      <IconDownload />
-                      Download
-                    </button>
-                  </div>
-
-                  {!canReport && (
-                    <p className="prose-muted text-xs" role="note">
-                      The report can be generated once the event is marked
-                      Completed.
-                    </p>
-                  )}
-
-                  {canReport && generatedAt && (
-                    <p className="num text-[11px] text-muted">
-                      Last generated {formatStamp(generatedAt)}
-                    </p>
-                  )}
-                </div>
-              </section>
-            )}
-
-            {hasEvidence && progressCard}
           </aside>
         </div>
       </div>
@@ -1483,15 +1567,10 @@ function EventDetails() {
         onGenerate={handleGenerateReport}
         generating={reportLoading}
         eventName={event?.event_name}
-        {...reportModalProps(
-          availabilityFromFiles({
-            description: cleanDescription,
-            participants: meta.expectedParticipants,
-            socialUrl: event.social_network_url,
-            media,
-            documents,
-          }),
-        )}
+        photoCount={media?.filter((m) => m.media_type === "image").length}
+        documentCount={documents?.length}
+        noticeCount={documents?.filter((d) => d.category !== "report").length}
+        attachmentCount={(documents?.filter((d) => d.category === "report").length || 0) + (media?.length || 0)}
       />
     </DeanShell>
   );

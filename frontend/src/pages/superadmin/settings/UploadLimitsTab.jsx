@@ -25,7 +25,7 @@ export default function UploadLimitsTab({ values, bounds, errors, disabled, onCh
         icon={<IconCamera />}
         eyebrow="Images & photographs"
         title="Photo upload limits"
-        chip="JPEG, PNG, WEBP, GIF"
+        chip="JPEG, PNG, WebP, GIF"
         description="How many photos a teacher may attach to an event, and how large each one may be."
       >
         <RequirementToggle

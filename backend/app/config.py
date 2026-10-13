@@ -139,11 +139,6 @@ class Settings(BaseSettings):
     # files from being attached.
     max_documents_per_event: int = 50
 
-    # Evidence behind one research record (certificates, the paper, a grant
-    # letter): a few files, budgeted by combined size like documents.
-    max_research_evidence_files: int = 5
-    max_research_evidence_total_mb: int = 10
-
     # ------------------------------------------------------------------
     # Cloudflare R2 (S3-compatible object storage for uploads)
     # ------------------------------------------------------------------
@@ -325,10 +320,6 @@ class Settings(BaseSettings):
     @property
     def max_documents_total_bytes(self) -> int:
         return self.max_documents_total_mb * 1024 * 1024
-
-    @property
-    def max_research_evidence_total_bytes(self) -> int:
-        return self.max_research_evidence_total_mb * 1024 * 1024
 
     def frontend_route(self, path: str) -> str:
         """Build a frontend route without introducing duplicate slashes."""

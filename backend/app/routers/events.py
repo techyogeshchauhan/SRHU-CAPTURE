@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from fastapi import (
     APIRouter,
@@ -63,7 +63,6 @@ from app.services.event_fields import (
     with_legacy_metadata,
 )
 from app.services import direct_upload
-from app.services.photo_webp import photo_as_webp
 from app.services.storage_service import (
     absolutize,
     check_declared_size,
@@ -911,38 +910,6 @@ def _dean_event_query(
     return query
 
 
-DEAN_EVENT_SORTS = ("recent", "event_date")
-
-
-def _month_key(doc: dict) -> str:
-    """The "YYYY-MM" an event is filed under in the grouped list: its date,
-    else its creation (as the list itself falls back)."""
-    for field in ("event_date", "start_date", "created_at"):
-        value = doc.get(field)
-        if isinstance(value, datetime):
-            return value.strftime("%Y-%m")
-        text = str(value or "")
-        if len(text) >= 7 and text[4] == "-":
-            return text[:7]
-    return ""
-
-
-def _month_counts(query: dict, sources: tuple[bool, bool]) -> dict[str, int]:
-    """Events per month under `query`, over both collections. Only three
-    small fields are read per event, so this stays cheap at thousands."""
-    use_events, use_managed = sources
-    collections = ([events] if use_events else []) + (
-        [managed_events] if use_managed and _should_include_managed_events() else []
-    )
-    counts: dict[str, int] = {}
-    for collection in collections:
-        for doc in collection.find(query, {"event_date": 1, "start_date": 1, "created_at": 1}):
-            key = _month_key(doc)
-            if key:
-                counts[key] = counts.get(key, 0) + 1
-    return counts
-
-
 @router.get(
     "/dean/events"
 )
@@ -976,21 +943,14 @@ def get_all_events(
     # Who submitted it: "teacher", "event_manager" or "all".
     source: str | None = Query(default=None, max_length=20),
 
-    # "recent" (newest submission first) or "event_date" (latest event date
-    # first: the order All Events groups by year and month, so a group is
-    # never split by a page boundary out of order).
-    sort: str = Query(default="recent", max_length=20),
-
-    # Always paged: with a couple of thousand events a whole list is too much
-    # to send, and to render. 25 by default, 100 at most.
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=25, ge=1, le=100),
+    # Optional paging. Still no default cap, so an un-paged caller keeps
+    # getting everything; the Dean page now asks for a page explicitly.
+    skip: int | None = Query(default=None, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=1000),
 ):
     user = get_current_user(authorization)
     check_event_viewer(user)
 
-    if sort not in DEAN_EVENT_SORTS:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown sort.")
     query = _dean_event_query(event_date, event_type, q, status_bucket, start_date=start_date, end_date=end_date)
     use_events, use_managed = event_sources(source)
 
@@ -1030,28 +990,15 @@ def get_all_events(
         stamp = doc.get("submitted_at") or doc.get("recorded_at") or doc.get("created_at") or ""
         return (str(stamp), str(doc.get("created_at") or ""))
 
-    def latest_date_first(doc: dict) -> tuple[str, str]:
-        return (str(doc.get("event_date") or ""), str(doc.get("created_at") or ""))
-
-    month_counts = None
-    if sort == "event_date":
-        by_date = [("event_date", DESCENDING), ("created_at", DESCENDING)]
-        event_list, total = paginate_with_managed(
-            query, by_date, by_date, latest_date_first, skip, limit, sources=(use_events, use_managed)
-        )
-        # How many events each month holds across every page, so the list's
-        # year and month headings count the whole result, not just this page.
-        month_counts = _month_counts(query, (use_events, use_managed))
-    else:
-        event_list, total = paginate_with_managed(
-            query,
-            [("submitted_at", DESCENDING), ("created_at", DESCENDING)],
-            [("recorded_at", DESCENDING), ("created_at", DESCENDING)],
-            newest_first,
-            skip,
-            limit,
-            sources=(use_events, use_managed),
-        )
+    event_list, total = paginate_with_managed(
+        query,
+        [("submitted_at", DESCENDING), ("created_at", DESCENDING)],
+        [("recorded_at", DESCENDING), ("created_at", DESCENDING)],
+        newest_first,
+        skip,
+        limit,
+        sources=(use_events, use_managed),
+    )
 
     many_with_legacy_metadata(event_list)
     attach_teachers(event_list)
@@ -1062,9 +1009,8 @@ def get_all_events(
         "total": total,
         "count": len(event_list),
         "counts": counts,
-        "month_counts": month_counts,
-        "has_more": skip + len(event_list) < total,
-        "skip": skip,
+        "has_more": (skip or 0) + len(event_list) < total,
+        "skip": skip or 0,
         "limit": limit,
 
         "filters": {
@@ -1187,236 +1133,6 @@ def get_event_media(
         "event_id": event_id,
         "media": media,
         "total": len(media),
-    }
-
-
-# ============================================================
-# GALLERY: EVERY EVENT WITH PHOTOS OR VIDEOS, AS ALBUMS
-#
-# /dean/gallery?media_type=image&status_bucket=approved&skip=0&limit=25
-#
-# One album per event: its counts and a single cover photo, never the media
-# itself. A page used to carry every file of 25 events, and the browser
-# fetched them all on open; an album's media is read only when the Dean opens
-# it (GET /dean/events/{id}/media). Filters are the Dean list's own
-# (_dean_event_query), so a gallery view and an All Events view under the
-# same filters show the same events.
-# ============================================================
-
-GALLERY_MEDIA_TYPES = ("image", "video")
-
-# Only what a gallery header shows -- not descriptions or history, which
-# would be read for every matching event just to be thrown away.
-_GALLERY_EVENT_FIELDS = {
-    "event_name": 1,
-    "event_type": 1,
-    "event_date": 1,
-    "end_date": 1,
-    "start_time": 1,
-    "status": 1,
-    "location": 1,
-    "teacher_id": 1,
-    "owner_id": 1,
-    "owner_name": 1,
-    "owner_email": 1,
-    "submitted_at": 1,
-    "recorded_at": 1,
-    "created_at": 1,
-}
-
-
-def _gallery_events(q, event_type, status_bucket, source, start_date, end_date, media_type):
-    """The gallery's events under the Dean's filters, newest first.
-
-    Returns ``(with_media, counts, media_filter)``: (event, media collection)
-    pairs for every event with at least one file of the kind on show, the
-    photo / video tally per event id, and the media query for that kind.
-    Shared by the album view (/dean/gallery) and the photo wall
-    (/dean/gallery/photos) so the two always show the same events.
-    """
-    query = _dean_event_query(None, event_type, q, status_bucket, start_date=start_date, end_date=end_date)
-    use_events, use_managed = event_sources(source)
-    kind = (media_type or "").strip().lower()
-    if kind and kind not in GALLERY_MEDIA_TYPES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown media type.")
-
-    # Each source pairs an event collection with its media collection.
-    sources = []
-    if use_events:
-        sources.append((events, event_media))
-    if use_managed:
-        sources.append((managed_events, managed_event_media))
-
-    candidates: list[tuple[dict, object]] = []
-    media_filter = {"media_type": kind} if kind else {}
-    counts: dict[str, dict[str, int]] = {}
-    for event_collection, media_collection in sources:
-        found = serialize_many(event_collection.find(query, _GALLERY_EVENT_FIELDS))
-        if not found:
-            continue
-        ids = [item["id"] for item in found]
-        # find() and a Python tally rather than an aggregation, so the route
-        # stays testable against the collection fakes.
-        for row in media_collection.find(
-            {"event_id": {"$in": ids}, **media_filter},
-            {"event_id": 1, "media_type": 1},
-        ):
-            tally = counts.setdefault(str(row.get("event_id")), {"image": 0, "video": 0})
-            row_kind = "video" if str(row.get("media_type") or "").lower() == "video" else "image"
-            tally[row_kind] += 1
-        candidates.extend((item, media_collection) for item in found)
-
-    # Only events with something to show, newest event first.
-    with_media = [(item, coll) for item, coll in candidates if item["id"] in counts]
-    with_media.sort(
-        key=lambda pair: (str(pair[0].get("event_date") or ""), str(pair[0].get("created_at") or "")),
-        reverse=True,
-    )
-    return with_media, counts, media_filter
-
-
-@router.get("/dean/gallery")
-def get_gallery(
-    request: Request,
-    authorization: str | None = Header(default=None),
-    q: str | None = Query(default=None, max_length=200),
-    event_type: str | None = Query(default=None),
-    status_bucket: str | None = Query(default=None, max_length=20),
-    source: str | None = Query(default=None, max_length=20),
-    start_date: str | None = Query(default=None),
-    end_date: str | None = Query(default=None),
-    # "image" or "video"; anything else (or nothing) means both.
-    media_type: str | None = Query(default=None, max_length=10),
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=25, ge=1, le=100),
-):
-    user = get_current_user(authorization)
-    check_event_viewer(user)
-    with_media, counts, _ = _gallery_events(q, event_type, status_bucket, source, start_date, end_date, media_type)
-
-    totals = {
-        "events": len(with_media),
-        "photos": sum(counts[item["id"]]["image"] for item, _ in with_media),
-        "videos": sum(counts[item["id"]]["video"] for item, _ in with_media),
-    }
-
-    total = len(with_media)
-    page_pairs = with_media[skip:skip + limit]
-    page_events = [item for item, _ in page_pairs]
-
-    # One cover per album: its first photo, whatever kind of media is on
-    # show, so a video-only filter still pictures an event that has photos.
-    # Only the covers are signed, and only for this page.
-    covers: dict[str, dict] = {}
-    for media_collection in {id(coll): coll for _, coll in page_pairs}.values():
-        ids = [item["id"] for item, coll in page_pairs if coll is media_collection]
-        cursor = media_collection.find({"event_id": {"$in": ids}, "media_type": "image"}).sort(
-            "created_at", ASCENDING
-        )
-        for item in serialize_many(cursor):
-            key = str(item.get("event_id"))
-            if key not in covers:
-                covers[key] = item
-    covers = {
-        key: {
-            "id": item.get("id"),
-            "file_name": item.get("file_name"),
-            "media_url": absolutize(request, item, "media_url").get("media_url"),
-        }
-        for key, item in covers.items()
-    }
-
-    attach_teachers(page_events)
-
-    groups = [
-        {
-            "event": item,
-            "photos": counts[item["id"]]["image"],
-            "videos": counts[item["id"]]["video"],
-            "cover": covers.get(item["id"]),
-        }
-        for item in page_events
-    ]
-
-    return {
-        "success": True,
-        "groups": groups,
-        "total": total,
-        "count": len(groups),
-        "has_more": skip + len(groups) < total,
-        "skip": skip,
-        "limit": limit,
-        "totals": totals,
-    }
-
-
-@router.get("/dean/gallery/photos")
-def get_gallery_photos(
-    request: Request,
-    authorization: str | None = Header(default=None),
-    q: str | None = Query(default=None, max_length=200),
-    event_type: str | None = Query(default=None),
-    status_bucket: str | None = Query(default=None, max_length=20),
-    source: str | None = Query(default=None, max_length=20),
-    start_date: str | None = Query(default=None),
-    end_date: str | None = Query(default=None),
-    media_type: str | None = Query(default=None, max_length=10),
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=48, ge=1, le=120),
-):
-    """Every photo and video of the filtered events as one wall, newest event
-    first, a page at a time -- so the Dean can look through everything without
-    opening event after event.
-
-    Only the page's events are read for their files, and only the page's files
-    are signed: the counts already tell which events a page spans.
-    """
-    user = get_current_user(authorization)
-    check_event_viewer(user)
-    with_media, counts, media_filter = _gallery_events(q, event_type, status_bucket, source, start_date, end_date, media_type)
-
-    def size(item):
-        return counts[item["id"]]["image"] + counts[item["id"]]["video"]
-
-    total = sum(size(item) for item, _ in with_media)
-
-    # Which events the page [skip, skip + limit) falls in, and from where.
-    spans: list[tuple[dict, object, int]] = []
-    position = 0
-    for item, coll in with_media:
-        n = size(item)
-        if position + n > skip and position < skip + limit:
-            spans.append((item, coll, max(0, skip - position)))
-        position += n
-        if position >= skip + limit:
-            break
-
-    attach_teachers([item for item, _, _ in spans])
-    items: list[dict] = []
-    for item, coll, offset in spans:
-        cursor = coll.find({"event_id": item["id"], **media_filter}).sort("created_at", ASCENDING)
-        for media in serialize_many(cursor)[offset:]:
-            if len(items) >= limit:
-                break
-            media = absolutize(request, media, "media_url")
-            media["event"] = {
-                "id": item["id"],
-                "event_name": item.get("event_name"),
-                "event_date": item.get("event_date"),
-                "event_type": item.get("event_type"),
-                "status": item.get("status"),
-                "teacher_name": item.get("teacher_name"),
-            }
-            items.append(media)
-
-    return {
-        "success": True,
-        "items": items,
-        "total": total,
-        "count": len(items),
-        "has_more": skip + len(items) < total,
-        "skip": skip,
-        "limit": limit,
     }
 
 
@@ -1748,10 +1464,10 @@ def get_archived_events(
     authorization: str | None = Header(
         default=None
     ),
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=25, ge=1, le=100),
+    skip: int | None = Query(default=None, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=1000),
 ):
-    """The archive shelf, most recently archived first, a page at a time."""
+    """The archive shelf, most recently archived first."""
     user = get_current_user(authorization)
     check_event_viewer(user)
 
@@ -3044,20 +2760,13 @@ def upload_teacher_event_media(
     )
     try:
         check_file_signature(info["extension"], peek_head(buffer))
-        file_name = safe_file_name(file.filename)
-        content_type = info["content_type"]
-        if is_image:
-            # Every photo is stored as WebP (services/photo_webp.py); the
-            # budget below counts the size that is actually stored.
-            buffer, size, file_name, content_type = photo_as_webp(
-                buffer, size, extension=info["extension"], file_name=file_name, content_type=content_type,
-            )
         _ensure_bytes_under_cap(event_media, cap_query, size, cap_bytes, media_type)
 
+        file_name = safe_file_name(file.filename)
         stored = save_upload(
             buffer,
             file_name=file_name,
-            content_type=content_type,
+            content_type=info["content_type"],
             kind="media",
             event_id=event_key,
             teacher_id=user["id"],
@@ -3073,7 +2782,7 @@ def upload_teacher_event_media(
         file_name=file_name,
         media_url=stored["url"],
         media_type=media_type,
-        content_type=content_type,
+        content_type=info["content_type"],
         file_size=size,
         original_name=file.filename,
     )
@@ -3444,8 +3153,6 @@ def complete_teacher_direct_upload(
     media_type = session["media_type"]
     caps = direct_upload.caps_for(media_type, get_upload_limits())
     direct_upload.finalize_object(session, per_file_bytes=caps["per_file_bytes"], what=caps["what"])
-    # A photo is stored as WebP, as on the proxied path.
-    direct_upload.convert_photo(session)
 
     collection = event_documents if media_type == "document" else event_media
     document, stored = direct_upload.new_record(session)

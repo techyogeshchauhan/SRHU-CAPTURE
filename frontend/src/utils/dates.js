@@ -145,23 +145,3 @@ export function maskDmy(raw) {
   if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
   return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
 }
-
-/**
- * Why typed dd/mm/yyyy text is not a date, in words -- or "" when it is a
- * real date, or empty. Lets a form say what is wrong instead of silently
- * treating the field as blank (dmyToIso only answers "" for both).
- */
-export function dmyProblem(text) {
-  const value = (text || "").trim();
-  if (!value || dmyToIso(value)) return "";
-  const match = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/.exec(value);
-  if (!match || match[3].length !== 4) return "Enter the full date as DD/MM/YYYY, e.g. 14/08/2026.";
-  const [, dd, mm, yyyy] = match.map(Number);
-  if (mm < 1 || mm > 12) {
-    return dd >= 1 && dd <= 12
-      ? `There is no month ${mm}. Dates are DD/MM/YYYY — did you mean ${String(mm).padStart(2, "0")}/${String(dd).padStart(2, "0")}/${yyyy}?`
-      : `There is no month ${mm}. Enter the date as DD/MM/YYYY.`;
-  }
-  if (yyyy < 1900) return "Enter a year from 1900 on.";
-  return `${mm === 2 ? "February" : "That month"} ${yyyy} has no day ${dd}.`;
-}

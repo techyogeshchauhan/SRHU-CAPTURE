@@ -117,7 +117,7 @@ const ACTIONS = {
     title: "Delete this account?",
     body: (name) =>
       `${name} will be removed from Campus Capture along with their sign-in. This cannot be undone. ` +
-      "Only accounts without events or research records can be deleted; for anyone else, deactivate the account instead.",
+      "Only accounts without events can be deleted; for anyone else, deactivate the account instead.",
     confirm: "Delete account",
     busy: "Deleting…",
     tone: "btn-danger",

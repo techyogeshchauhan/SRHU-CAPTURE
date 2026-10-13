@@ -159,27 +159,3 @@ describe("effectiveCeiling", () => {
     expect(effectiveCeiling(base()).worstCaseMb).toBe(415);
   });
 });
-
-describe("research evidence limits", () => {
-  const bounds = {
-    max_research_evidence_files: { min: 1, max: 20 },
-    max_research_evidence_total_mb: { min: 1, max: 100 },
-  };
-
-  it("are bounded like every other limit", () => {
-    const errors = validateLimits(
-      { max_research_evidence_files: "0", max_research_evidence_total_mb: "10" },
-      bounds,
-    );
-    expect(Object.keys(errors)).toEqual(["max_research_evidence_files"]);
-  });
-
-  it("cannot promise a file larger than the deployment accepts", () => {
-    const errors = validateLimits(
-      { max_research_evidence_files: "5", max_research_evidence_total_mb: "90" },
-      bounds,
-      { deploymentCeilingMb: 50 },
-    );
-    expect(errors.max_research_evidence_total_mb).toMatch(/50 MB/);
-  });
-});

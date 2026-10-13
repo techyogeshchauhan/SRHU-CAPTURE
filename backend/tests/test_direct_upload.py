@@ -33,20 +33,7 @@ TEACHER = {"id": str(ObjectId()), "name": "Meera", "email": "m@srhu.edu.in", "ro
 OTHER_TEACHER = {"id": str(ObjectId()), "name": "Ravi", "email": "r@srhu.edu.in", "role": "teacher"}
 USERS = {"Bearer teacher": TEACHER, "Bearer other": OTHER_TEACHER}
 
-def _image(fmt: str, size=(16, 12), color=(200, 60, 40)) -> bytes:
-    """A real (small) image: photos are re-encoded as WebP, so they must decode."""
-    from io import BytesIO
-
-    from PIL import Image
-
-    buffer = BytesIO()
-    Image.new("RGB", size, color).save(buffer, fmt)
-    return buffer.getvalue()
-
-
-PNG = _image("PNG")
-# Passes the magic-byte check but is no image at all.
-BROKEN_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 MP4_HEAD = b"\x00\x00\x00\x18ftypmp42"
 DOCX = b"PK\x03\x04" + b"\x00" * 64
 
@@ -175,12 +162,6 @@ class FakeR2:
         self.objects.pop(key, None)
         return True
 
-    def download_to(self, key, fileobj):
-        fileobj.write(self.objects[key]["data"])
-
-    def upload_stream(self, stream, *, object_key, content_type, metadata=None, content_disposition=None):
-        self.objects[object_key] = {"data": stream.read(), "content_type": content_type}
-
     def object_url(self, key, *, file_name=None, content_type=None):
         return f"https://r2.test/{key}?signature=get"
 
@@ -223,7 +204,7 @@ class R2Fixture:
         for name in (
             "create_multipart_upload", "presign_upload_part", "list_parts",
             "complete_multipart_upload", "abort_multipart_upload", "head_object",
-            "read_range", "delete_object", "object_url", "download_to", "upload_stream",
+            "read_range", "delete_object", "object_url",
         ):
             targets.append((r2_service, name, getattr(self.r2, name)))
         for target, attribute, value in targets:
@@ -369,23 +350,6 @@ class TeacherDirectUploadTests(R2Fixture, unittest.TestCase):
 
     # ---- complete -------------------------------------------------------
 
-    def test_an_unreadable_photo_is_refused_and_its_bytes_freed(self) -> None:
-        response = self.upload("broken.png", BROKEN_PNG, "image/png")
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("could not be read", response.json()["detail"])
-        self.assertEqual(self.media.docs, [])
-        self.assertEqual(self.r2.objects, {})  # the uploaded original is deleted
-        self.assertEqual(self.only_session()["status"], "failed")
-
-    def test_a_webp_photo_is_stored_as_it_came(self) -> None:
-        webp = _image("WEBP")
-        response = self.upload("cover.webp", webp, "image/webp")
-        self.assertEqual(response.status_code, 201, response.text)
-        (record,) = self.media.docs
-        self.assertEqual(self.r2.objects[record["object_key"]]["data"], webp)  # not re-encoded
-        self.assertEqual(record["file_name"], "cover.webp")
-        self.assertEqual(self.r2.deleted, [])
-
     def test_photo_round_trip_records_the_same_shape_as_a_posted_one(self) -> None:
         response = self.upload("My Photo.png", PNG, "image/png")
         self.assertEqual(response.status_code, 201, response.text)
@@ -393,20 +357,14 @@ class TeacherDirectUploadTests(R2Fixture, unittest.TestCase):
         self.assertEqual(response.json()["message"], "Media uploaded successfully")
         self.assertEqual(media["storage"], "r2")
         self.assertEqual(media["media_type"], "image")
-        # Stored as WebP; the name the teacher chose is kept as the original.
-        self.assertEqual(media["content_type"], "image/webp")
-        self.assertEqual(media["file_name"], "My_Photo.webp")
+        self.assertEqual(media["content_type"], "image/png")
+        self.assertEqual(media["file_size"], len(PNG))
+        self.assertEqual(media["file_name"], "My_Photo.png")
         self.assertEqual(media["original_name"], "My Photo.png")
         self.assertTrue(media["media_url"].endswith("?signature=get"))  # signed GET
 
         (record,) = self.media.docs
-        stored = self.r2.objects[record["object_key"]]
-        self.assertTrue(record["object_key"].endswith(".webp"))
-        self.assertTrue(stored["data"].startswith(b"RIFF") and stored["data"][8:12] == b"WEBP")
-        self.assertEqual(stored["content_type"], "image/webp")
-        self.assertEqual(media["file_size"], len(stored["data"]))
-        # The original PNG the browser uploaded is gone.
-        self.assertEqual([key for key in self.r2.objects if key.endswith(".png")], [])
+        self.assertEqual(self.r2.objects[record["object_key"]]["data"], PNG)
         session = self.only_session()
         self.assertEqual(session["status"], "completed")
         self.assertEqual(session["record_id"], str(record["_id"]))
@@ -675,7 +633,7 @@ class EventManagerDirectUploadTests(R2Fixture, EventManagerTestCase):
         send_parts(self.r2, started, PNG)
         response = self.call("POST", f"{self.base}/{started['session_id']}/complete")
         self.assertEqual(response.status_code, 201, response.text)
-        self.assertEqual(response.json()["media"]["file_name"], "stage_photo.webp")
+        self.assertEqual(response.json()["media"]["file_name"], "stage_photo.png")
         self.assertEqual(len(self.media.docs), 1)
 
         # And the recorded file satisfies the save rule like a posted one, preserving category.

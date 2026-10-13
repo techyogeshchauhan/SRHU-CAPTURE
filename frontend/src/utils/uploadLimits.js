@@ -24,11 +24,6 @@ export const DEFAULT_UPLOAD_LIMITS = {
   photos_required: true,
   videos_required: false,
   documents_required: true,
-  // Evidence behind one research record (backend routers/research.py).
-  max_research_evidence_files: 5,
-  max_research_evidence_total_mb: 10,
-  // Whether a research record needs evidence before it can be submitted.
-  research_evidence_required: false,
 };
 
 /** Upload kind (as the wizard names it) -> its mandatory-upload switch. */
@@ -48,8 +43,6 @@ export const DEFAULT_LIMIT_BOUNDS = {
   max_video_total_mb: { min: 1, max: 2000, unit: "mb" },
   max_documents_per_event: { min: 1, max: 200, unit: "count" },
   max_documents_total_mb: { min: 1, max: 500, unit: "mb" },
-  max_research_evidence_files: { min: 1, max: 20, unit: "count" },
-  max_research_evidence_total_mb: { min: 1, max: 100, unit: "mb" },
 };
 
 /** The fields where null is a legal value meaning "no cap". */

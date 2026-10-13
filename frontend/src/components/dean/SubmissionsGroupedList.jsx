@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import StatusChip from "../teacher/StatusChip";
 import Modal from "../teacher/Modal";
-import ReportCustomizationModal from "../common/ReportCustomizationModal";
 import ProgressTimeline from "../teacher/ProgressTimeline";
 import { SubmitterLine } from "../common/submitter";
 import readEventFields from "../../utils/eventFields";
@@ -117,7 +116,6 @@ export default function SubmissionsGroupedList({
     downloadSingle,
     downloadBulk,
     canDownload,
-    reportPicker,
   } = useEventReportDownload();
 
   useEffect(() => {
@@ -725,10 +723,6 @@ export default function SubmissionsGroupedList({
           ))}
         </div>
       </Modal>
-
-      {/* Every report from this list asks which sections to include first;
-          sections the event(s) have nothing for are disabled. */}
-      <ReportCustomizationModal {...reportPicker} />
     </div>
   );
 }
@@ -862,7 +856,7 @@ function SubmissionRow({
           {/* Header & Department */}
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-1">
-              <h4 className="h3 text-base text-ink">
+              <h4 className="font-display text-base font-bold text-ink">
                 {event.event_name}
               </h4>
               <p className="text-xs text-muted">

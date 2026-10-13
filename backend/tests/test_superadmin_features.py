@@ -101,9 +101,7 @@ class SuperAdminFeaturesTests(unittest.TestCase):
         with patch("app.utils.auth.get_current_user", return_value=SUPERADMIN), \
              patch("app.routers.superadmin.users.find_one", return_value=target_user), \
              patch("app.routers.superadmin.users.update_one") as mock_update, \
-             patch("app.services.email_service.is_configured", return_value=True), \
-             patch("app.services.email_service.send_password_set_by_admin_email") as mock_email, \
-             patch("app.services.email_service.send_teacher_credentials_email") as wrong_email, \
+             patch("app.services.email_service.send_teacher_credentials_email"), \
              patch("app.services.audit_service.audit_logs.insert_one"):
             response = self.client.post(
                 f"/superadmin/users/{user_id}/reset-password",
@@ -115,32 +113,6 @@ class SuperAdminFeaturesTests(unittest.TestCase):
             self.assertTrue(data["success"])
             self.assertIn("temporary_password", data)
             mock_update.assert_called_once()
-            # The reset email, not "A Teacher account has been created for you".
-            mock_email.assert_called_once_with("smith@srhu.edu.in", "Prof Smith", data["temporary_password"])
-            wrong_email.assert_not_called()
-
-    def test_reset_password_lets_an_invited_account_sign_in(self) -> None:
-        """An Event Manager who never used their invitation link was given a
-        password the login refused ("Your email is not confirmed")."""
-        user_id = str(ObjectId())
-        invited = {
-            "_id": ObjectId(user_id), "name": "New EM", "email": "em@srhu.edu.in", "role": "event_manager",
-            "email_verified": False, "invite_token_hash": "abc", "invite_expires_at": "2026-12-01",
-        }
-        with patch("app.utils.auth.get_current_user", return_value=SUPERADMIN), \
-             patch("app.routers.superadmin.users.find_one", return_value=invited), \
-             patch("app.routers.superadmin.users.update_one") as mock_update, \
-             patch("app.services.email_service.is_configured", return_value=False), \
-             patch("app.services.audit_service.audit_logs.insert_one"):
-            response = self.client.post(
-                f"/superadmin/users/{user_id}/reset-password", json={}, headers={"Authorization": "Bearer token"},
-            )
-        self.assertEqual(response.status_code, 200, response.text)
-        written = mock_update.call_args.args[1]["$set"]
-        self.assertTrue(written["email_verified"])
-        self.assertIsNotNone(written["email_verified_at"])
-        self.assertIsNone(written["invite_token_hash"])
-        self.assertTrue(written["must_change_password"])
 
     def test_audit_logs_listing(self) -> None:
         log_doc = {
@@ -197,9 +169,6 @@ class SuperAdminFeaturesTests(unittest.TestCase):
              patch("app.routers.superadmin.events.count_documents", return_value=10), \
              patch("app.routers.superadmin.users.count_documents", return_value=5), \
              patch("app.routers.superadmin.event_media.count_documents", return_value=20), \
-             patch("app.routers.superadmin.managed_event_media.count_documents", return_value=4), \
-             patch("app.routers.superadmin.managed_events.count_documents", return_value=0), \
-             patch("app.routers.superadmin.managed_events.aggregate", return_value=[]), \
              patch("app.routers.superadmin.events.aggregate", return_value=[]), \
              patch("app.routers.superadmin.users.find", return_value=[]), \
              patch("app.routers.superadmin.events.find", return_value=[]):
@@ -211,7 +180,5 @@ class SuperAdminFeaturesTests(unittest.TestCase):
             data = response.json()
             self.assertTrue(data["success"])
             self.assertEqual(data["kpis"]["total_events"], 10)
-            # Event Manager uploads are counted with the teachers'.
-            self.assertEqual(data["kpis"]["total_media"], 24)
             self.assertIn("monthly_trends", data)
             self.assertIn("category_distribution", data)

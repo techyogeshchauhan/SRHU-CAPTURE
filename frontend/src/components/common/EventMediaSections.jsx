@@ -11,46 +11,38 @@ const isVideo = (item) => String(item?.media_type || "").toLowerCase() === "vide
  * were in, the videos sat below the fold of a height-capped scroll box and
  * looked missing. Each card now shows every item of its own kind, with its
  * own count, and its viewer steps through that kind only.
- *
- * A kind with nothing uploaded is left out altogether rather than shown as a
- * "0" card. Event details and report views use the same rule.
  */
 export default function EventMediaSections({
   items = [],
   eventName = "Event",
   columns = "grid-cols-2 sm:grid-cols-3",
   onLoadError,
-  hideEmpty = true,
 }) {
   const videos = items.filter(isVideo);
   const photos = items.filter((item) => !isVideo(item));
 
   return (
     <>
-      {(!hideEmpty || photos.length > 0) && (
-        <MediaSection
-          id="event-photos"
-          Icon={IconImagePlus}
-          heading="Photos"
-          items={photos}
-          title={`${eventName} · Photos`}
-          columns={columns}
-          onLoadError={onLoadError}
-          emptyText="No photos uploaded for this event."
-        />
-      )}
-      {(!hideEmpty || videos.length > 0) && (
-        <MediaSection
-          id="event-videos"
-          Icon={IconFilm}
-          heading="Videos"
-          items={videos}
-          title={`${eventName} · Videos`}
-          columns={columns}
-          onLoadError={onLoadError}
-          emptyText="No videos uploaded for this event."
-        />
-      )}
+      <MediaSection
+        id="event-photos"
+        Icon={IconImagePlus}
+        heading="Photos"
+        items={photos}
+        title={`${eventName} · Photos`}
+        columns={columns}
+        onLoadError={onLoadError}
+        emptyText="No photos uploaded for this event."
+      />
+      <MediaSection
+        id="event-videos"
+        Icon={IconFilm}
+        heading="Videos"
+        items={videos}
+        title={`${eventName} · Videos`}
+        columns={columns}
+        onLoadError={onLoadError}
+        emptyText="No videos uploaded for this event."
+      />
     </>
   );
 }
@@ -67,10 +59,7 @@ function MediaSection({ id, Icon, heading, items, title, columns, emptyText, onL
             {heading}
           </h2>
         </div>
-        <span
-          className="chip chip-sm chip-solid num"
-          aria-label={`${items.length} ${heading.toLowerCase().replace(/s$/, items.length === 1 ? "" : "s")}`}
-        >
+        <span className="chip chip-sm chip-solid num" aria-label={`${items.length} ${heading.toLowerCase()}`}>
           {items.length}
         </span>
       </div>

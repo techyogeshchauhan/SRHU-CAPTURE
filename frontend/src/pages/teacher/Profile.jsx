@@ -9,7 +9,6 @@ import {
 } from "../../services/auth";
 import { useOriginState } from "../../hooks/useOriginState";
 import TeacherShell from "../../components/teacher/TeacherShell";
-import PageHero from "../../components/teacher/PageHero";
 import { usePanel } from "../../components/teacher/panel";
 import LogoutConfirmModal from "../../components/common/LogoutConfirmModal";
 import EditProfileModal from "../../components/common/EditProfileModal";
@@ -70,10 +69,6 @@ const ACTION_CLASS =
 export default function TeacherProfile() {
   const navigate = useNavigate();
   const panel = usePanel();
-  // The Event Manager's profile matches the Dean's: identity in the hero,
-  // the same heading sizes. The teacher's keeps its own layout for now.
-  const manager = panel.role === "event_manager";
-  const headingClass = manager ? "h3 text-base text-ink" : "text-sm font-semibold text-ink";
   const originState = useOriginState();
   const { user: authUser } = useAuth();
 
@@ -361,66 +356,7 @@ export default function TeacherProfile() {
       profile={profile}
       onLogout={handleLogout}
     >
-      <div
-        className={`mx-auto w-full max-w-5xl ${
-          manager ? "px-5 py-6 sm:px-8" : "px-4 py-4 sm:px-6 sm:py-5 lg:px-8"
-        }`}
-      >
-        {manager && (
-          <div className="mb-4">
-            <PageHero
-              compact
-              toolbar
-              title="My"
-              accent="Profile"
-              actions={
-                profile && (
-                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2.5 lg:justify-end">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/12 font-display text-base font-bold text-accent ring-1 ring-accent/20">
-                        {initialsOf(displayName, displayEmail)}
-                      </span>
-                      <div className="min-w-0">
-                        <h2 className="h3 truncate text-base text-ink">{displayName}</h2>
-                        <p className="truncate text-sm text-muted" title={displayEmail}>
-                          {displayEmail}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className="chip chip-sm chip-track"
-                        style={{ "--track": trackOfRole(role) }}
-                        title={designation || undefined}
-                      >
-                        <span className="dot dot-sm" />
-                        {designation || labelOfRole(role)}
-                      </span>
-                      <span
-                        className="chip chip-sm chip-track"
-                        style={{
-                          "--track": trackOf(isVerified ? "approved" : "pending"),
-                        }}
-                      >
-                        <span className="dot dot-sm" />
-                        {isVerified ? "Email verified" : "Email not verified"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setEditOpen(true)}
-                        className="btn btn-ghost btn-sm"
-                      >
-                        <IconEdit className="h-4 w-4" />
-                        <span>Edit profile</span>
-                      </button>
-                    </div>
-                  </div>
-                )
-              }
-            />
-          </div>
-        )}
+      <div className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6 sm:py-5 lg:px-8">
 
         {error && (
           <div
@@ -470,7 +406,7 @@ export default function TeacherProfile() {
             aria-labelledby="change-password-heading"
           >
             <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 id="change-password-heading" className={headingClass}>
+              <h2 id="change-password-heading" className="text-sm font-semibold text-ink">
                 Change password
               </h2>
               {!mustChange && (
@@ -539,61 +475,59 @@ export default function TeacherProfile() {
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18.5rem]">
 
             {/* ---------------------------------------------------- identity */}
-            {!manager && (
-              <section className="glass reveal relative overflow-hidden p-4 sm:p-5 lg:col-span-2">
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 left-0 w-1"
-                  style={{ background: trackOfRole(role) }}
-                />
+            <section className="glass reveal relative overflow-hidden p-4 sm:p-5 lg:col-span-2">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 left-0 w-1"
+                style={{ background: trackOfRole(role) }}
+              />
 
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent/12 font-display text-lg font-bold text-accent ring-1 ring-accent/20">
-                    {initialsOf(displayName, displayEmail)}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent/12 font-display text-lg font-bold text-accent ring-1 ring-accent/20">
+                  {initialsOf(displayName, displayEmail)}
+                </span>
+
+                <div className="min-w-0 flex-1 basis-44">
+                  <p className="eyebrow text-[11px]">My Profile</p>
+                  <h1 className="truncate font-display text-xl font-bold leading-tight text-ink sm:text-2xl">
+                    {displayName}
+                  </h1>
+                  <p className="mt-0.5 truncate text-sm text-muted" title={displayEmail}>
+                    {displayEmail}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditOpen(true)}
+                    className="btn btn-ghost btn-sm"
+                  >
+                    <IconEdit className="h-4 w-4" />
+                    <span>Edit profile</span>
+                  </button>
+
+                  <span
+                    className="chip chip-sm chip-track"
+                    style={{ "--track": trackOfRole(role) }}
+                    title={designation || undefined}
+                  >
+                    <span className="dot dot-sm" />
+                    {designation || labelOfRole(role)}
                   </span>
 
-                  <div className="min-w-0 flex-1 basis-44">
-                    <p className="eyebrow text-[11px]">My Profile</p>
-                    <h1 className="truncate font-display text-xl font-bold leading-tight text-ink sm:text-2xl">
-                      {displayName}
-                    </h1>
-                    <p className="mt-0.5 truncate text-sm text-muted" title={displayEmail}>
-                      {displayEmail}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setEditOpen(true)}
-                      className="btn btn-ghost btn-sm"
-                    >
-                      <IconEdit className="h-4 w-4" />
-                      <span>Edit profile</span>
-                    </button>
-
-                    <span
-                      className="chip chip-sm chip-track"
-                      style={{ "--track": trackOfRole(role) }}
-                      title={designation || undefined}
-                    >
-                      <span className="dot dot-sm" />
-                      {designation || labelOfRole(role)}
-                    </span>
-
-                    <span
-                      className="chip chip-sm chip-track"
-                      style={{
-                        "--track": trackOf(isVerified ? "approved" : "pending"),
-                      }}
-                    >
-                      <span className="dot dot-sm" />
-                      {isVerified ? "Email verified" : "Email not verified"}
-                    </span>
-                  </div>
+                  <span
+                    className="chip chip-sm chip-track"
+                    style={{
+                      "--track": trackOf(isVerified ? "approved" : "pending"),
+                    }}
+                  >
+                    <span className="dot dot-sm" />
+                    {isVerified ? "Email verified" : "Email not verified"}
+                  </span>
                 </div>
-              </section>
-            )}
+              </div>
+            </section>
 
             {/* ----------------------------------------------- account details */}
             <section
@@ -602,7 +536,7 @@ export default function TeacherProfile() {
               aria-labelledby="profile-details-heading"
             >
               <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 id="profile-details-heading" className={headingClass}>
+                <h2 id="profile-details-heading" className="text-sm font-semibold text-ink">
                   Account details
                 </h2>
                 {loading && (
@@ -687,7 +621,7 @@ export default function TeacherProfile() {
               style={{ "--i": 2 }}
               aria-labelledby="profile-actions-heading"
             >
-              <h2 id="profile-actions-heading" className={`mb-3 ${headingClass}`}>
+              <h2 id="profile-actions-heading" className="mb-3 text-sm font-semibold text-ink">
                 Quick actions
               </h2>
 

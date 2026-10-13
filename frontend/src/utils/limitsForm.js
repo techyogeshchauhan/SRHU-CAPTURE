@@ -128,7 +128,7 @@ export function validateLimits(values, bounds, { deploymentCeilingMb = null } = 
   // upload path, so a larger value would promise an upload the deployment
   // cannot physically accept.
   if (deploymentCeilingMb != null) {
-    for (const field of ["max_photo_size_mb", "max_video_size_mb", "max_documents_total_mb", "max_research_evidence_total_mb"]) {
+    for (const field of ["max_photo_size_mb", "max_video_size_mb", "max_documents_total_mb"]) {
       const value = numbers[field];
       if (value != null && value > deploymentCeilingMb && !errors[field]) {
         errors[field] =

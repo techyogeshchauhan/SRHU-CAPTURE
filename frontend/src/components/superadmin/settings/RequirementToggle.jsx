@@ -3,10 +3,8 @@
  *
  * On means a teacher cannot submit an event for approval until at least one
  * file of this kind is attached; the server enforces the same rule on submit.
- * `subject` names what is submitted ("event" by default; "research record"
- * for research evidence).
  */
-export default function RequirementToggle({ id, noun, value, disabled, onChange, subject = "event" }) {
+export default function RequirementToggle({ id, noun, value, disabled, onChange }) {
   const labelId = `${id}-label`;
   const hintId = `${id}-hint`;
 
@@ -18,8 +16,8 @@ export default function RequirementToggle({ id, noun, value, disabled, onChange,
         </p>
         <p id={hintId} className="mt-0.5 text-xs text-muted">
           {value
-            ? `On: at least one ${noun} must be uploaded before ${/^[aeiou]/i.test(subject) ? "an" : "a"} ${subject} can be submitted.`
-            : `Off: ${subject}s can be submitted with or without ${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}.`}
+            ? `On: at least one ${noun} must be uploaded before an event can be submitted.`
+            : `Off: events can be submitted with or without a ${noun}.`}
         </p>
       </div>
 

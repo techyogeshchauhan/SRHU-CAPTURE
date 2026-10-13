@@ -402,12 +402,6 @@ export const TEACHER_EDITABLE_STATUSES = [
 ];
 
 export function canTeacherEditEvent(event) {
-  // An event the Dean archived is kept as it is (the Event Manager's API
-  // refuses changes to it; a teacher's list never includes one).
-  if (event && typeof event === "object" && event.archived_at) {
-    return false;
-  }
-
   const status = normalizeStatus(
     typeof event === "string" ? event : event?.status
   );
@@ -424,10 +418,6 @@ export function canTeacherEditEvent(event) {
 export function getEditLockReason(event) {
   if (canTeacherEditEvent(event)) {
     return "";
-  }
-
-  if (event?.archived_at) {
-    return "The Dean has archived this event, so it can no longer be edited.";
   }
 
   return "This event has been approved and can no longer be edited.";

@@ -40,7 +40,7 @@ from pymongo import ASCENDING, DESCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.config import settings
-from app.database import audit_logs, events, research_records, users
+from app.database import audit_logs, events, users
 from app.models.documents import USER_PRIVATE_FIELDS, new_user_document
 from app.routers.auth import find_user_by_email
 from app.schemas.dean import (
@@ -286,31 +286,11 @@ def _event_counts(teacher_ids: list[str], *, include_drafts: bool = False) -> di
     return counts
 
 
-def _research_counts(teacher_ids: list[str]) -> dict[str, int]:
-    """How many research records each teacher's portfolio holds -- their own
-    (faculty_id) and any they entered. Deleting the account would leave these
-    behind as "Unknown faculty member", so they guard deletion like events."""
-    counts = {teacher_id: 0 for teacher_id in teacher_ids}
-    if teacher_ids:
-        query = {"$or": [{"faculty_id": {"$in": teacher_ids}}, {"created_by": {"$in": teacher_ids}}]}
-        for record in research_records.find(query, {"faculty_id": 1, "created_by": 1}):
-            # Counted once per teacher, even when they both own and entered it.
-            for key in {str(record.get("faculty_id")), str(record.get("created_by"))}:
-                if key in counts:
-                    counts[key] += 1
-    return counts
-
-
-def _has_events_text(visible: int, research: int = 0) -> str:
-    """Why an account with events or research cannot be deleted, without
-    counting drafts the Dean cannot see."""
-    parts = []
+def _has_events_text(visible: int) -> str:
+    """Why an account with events cannot be deleted, without counting drafts
+    the Dean cannot see."""
     if visible:
-        parts.append(f"{visible} event{'s' if visible != 1 else ''}")
-    if research:
-        parts.append(f"{research} research record{'s' if research != 1 else ''}")
-    if parts:
-        return f"Has {' and '.join(parts)}."
+        return f"Has {visible} event{'s' if visible != 1 else ''}."
     return "Has work saved in their account."
 
 
@@ -420,7 +400,6 @@ def list_teachers(
     # so no credential field can reach a Dean even if the projection changes.
     teachers = serialize_many(cursor, exclude=USER_PRIVATE_FIELDS)
     event_counts = _event_counts([t["id"] for t in teachers])
-    research_counts = _research_counts([t["id"] for t in teachers])
     for teacher in teachers:
         teacher["onboarding_status"] = onboarding_status(
             {
@@ -431,7 +410,6 @@ def list_teachers(
             now,
         )
         teacher["event_count"] = event_counts.get(teacher["id"], 0)
-        teacher["research_count"] = research_counts.get(teacher["id"], 0)
 
     return {
         "success": True,
@@ -681,7 +659,6 @@ def create_teacher(payload: DeanCreateTeacherRequest, dean: dict = Depends(dean_
     teacher = public_user(created)
     teacher["onboarding_status"] = onboarding_status(created)
     teacher["event_count"] = 0
-    teacher["research_count"] = 0
 
     label = _label(created)
     if invite["status"] == "sent":
@@ -944,15 +921,14 @@ def bulk_delete_teachers(payload: DeanTeacherIdsRequest, dean: dict = Depends(de
     ids = [str(t["_id"]) for t in teachers]
     counts = _event_counts(ids)
     everything = _event_counts(ids, include_drafts=True)
-    research = _research_counts(ids)
 
     deletable: list[dict] = []
     for teacher in teachers:
         key = str(teacher["_id"])
-        if everything.get(key, 0) or research.get(key, 0):
+        if everything.get(key, 0):
             results.append(_result_row(
                 teacher, key, "skipped",
-                f"{_has_events_text(counts.get(key, 0), research.get(key, 0))} Remove the teacher instead.",
+                f"{_has_events_text(counts.get(key, 0))} Remove the teacher instead.",
             ))
         else:
             deletable.append(teacher)
@@ -1035,12 +1011,11 @@ def delete_teacher(user_id: str, dean: dict = Depends(dean_dep)):
     teacher = find_teacher_or_404(user_id, dean, include_removed=True)
 
     key = str(teacher["_id"])
-    research = _research_counts([key])[key]
-    if _event_counts([key], include_drafts=True)[key] or research:
+    if _event_counts([key], include_drafts=True)[key]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"{_label(teacher)}: {_has_events_text(_event_counts([key])[key], research)} "
+                f"{_label(teacher)}: {_has_events_text(_event_counts([key])[key])} "
                 "The account cannot be deleted permanently. Remove the teacher instead: "
                 "their records are kept."
             ),
@@ -1186,7 +1161,7 @@ def _invite_skip_reason(doc: dict) -> str | None:
     return None
 
 
-def _deliver_invite(doc: dict, dean: dict, **wording: str) -> tuple[str, str | None]:
+def _deliver_invite(doc: dict, dean: dict) -> tuple[str, str | None]:
     """Email one teacher a new invitation link. Returns ``(outcome, reason)``.
 
     The email goes first and the link is stored only once it was accepted, so
@@ -1195,7 +1170,7 @@ def _deliver_invite(doc: dict, dean: dict, **wording: str) -> tuple[str, str | N
     """
     token = generate_one_time_token()
     try:
-        email_service.send_teacher_invitation_email(doc["email"], doc.get("name") or "there", token, **wording)
+        email_service.send_teacher_invitation_email(doc["email"], doc.get("name") or "there", token)
     except email_service.EmailDeliveryError:
         logger.warning("dean_invite_email_failed recipient_domain=%s", _domain(doc["email"]))
         return "failed", "The email could not be delivered."

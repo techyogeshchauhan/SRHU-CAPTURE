@@ -9,46 +9,32 @@ import { IconArrowRight } from "../teacher/icons";
  *
  * `track` is the hex the count, icon tile and top edge are tinted from, the
  * same `--track` convention the status chips use.
- *
- * A `to` of "#id" jumps to that section of the same page (a plain anchor;
- * the router does not scroll to hashes).
- *
- * `compact` draws a smaller box -- tighter padding, a smaller count and
- * icon -- for a row of figures above a list rather than a dashboard.
  */
-export default function StatCard({ label, value, Icon, track, hint, to, index = 0, compact = false }) {
-  const inPage = typeof to === "string" && to.startsWith("#");
-  const Tag = to ? (inPage ? "a" : Link) : "div";
+export default function StatCard({ label, value, Icon, track, hint, to, index = 0 }) {
+  const Tag = to ? Link : "div";
 
   return (
     <Tag
-      {...(inPage ? { href: to } : to ? { to } : {})}
+      to={to}
       style={{ "--track": track, "--i": index + 1 }}
-      className={`stat-card reveal group rounded-2xl ${compact ? "px-3 py-2.5" : "p-3.5 sm:p-4"} ${to ? "" : "is-static"}`}
+      className={`stat-card reveal group rounded-2xl p-3.5 sm:p-4 ${to ? "" : "is-static"}`}
     >
       <div className="relative flex items-center justify-between gap-2">
         <p className="truncate text-xs font-medium text-muted sm:text-sm">{label}</p>
         {Icon && (
-          <span
-            className={`icon-tile icon-tile-track shrink-0 rounded-lg ${
-              compact ? "h-6 w-6 [&>svg]:h-3.5 [&>svg]:w-3.5" : "h-8 w-8 [&>svg]:h-4 [&>svg]:w-4"
-            }`}
-          >
+          <span className="icon-tile icon-tile-track h-8 w-8 shrink-0 rounded-lg [&>svg]:h-4 [&>svg]:w-4">
             <Icon />
           </span>
         )}
       </div>
 
-      <p
-        className={`stat-num relative ${compact ? "mt-0.5 text-xl sm:text-[1.375rem]" : "mt-1 text-[1.75rem] sm:text-[2rem]"}`}
-        style={{ color: track }}
-      >
+      <p className="stat-num relative mt-1 text-[1.75rem] sm:text-[2rem]" style={{ color: track }}>
         {value}
       </p>
 
       {hint && (
         <p
-          className={`relative ${compact ? "mt-1" : "mt-1.5"} flex min-w-0 items-center gap-1 text-xs font-medium text-muted ${
+          className={`relative mt-1.5 flex min-w-0 items-center gap-1 text-xs font-medium text-muted ${
             to ? "transition group-hover:text-ink" : ""
           }`}
           title={hint}

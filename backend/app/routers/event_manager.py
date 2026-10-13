@@ -72,7 +72,6 @@ from app.schemas.uploads import DirectUploadSignRequest, DirectUploadStartReques
 from app.services import direct_upload, report_files
 from app.services.event_fields import many_with_legacy_metadata, with_legacy_metadata
 from app.services.event_types import resolve_event_type
-from app.services.photo_webp import photo_as_webp
 from app.services.managed_report_pdf import (
     ReportEntry,
     attachment_for,
@@ -120,27 +119,6 @@ def _own_event_or_404(event_id: str, user: dict) -> dict:
     event = managed_events.find_one({"_id": object_id, "owner_id": user["id"]}) if object_id else None
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    return event
-
-
-ARCHIVED_BY_DEAN = (
-    "The Dean has moved this event to the archive, so it can no longer be changed, "
-    "deleted or reported on. Ask the Dean to restore it."
-)
-
-
-def _ensure_not_archived(event: dict) -> None:
-    """An event the Dean archived is kept as it is: on the shelf it can be
-    read, but not edited, deleted or reported on -- the same rule the Dean's
-    own report routes follow (a report must not come from the shelf)."""
-    if event.get("archived_at") is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ARCHIVED_BY_DEAN)
-
-
-def _own_open_event_or_404(event_id: str, user: dict) -> dict:
-    """The caller's event, refusing a change while it is archived."""
-    event = _own_event_or_404(event_id, user)
-    _ensure_not_archived(event)
     return event
 
 
@@ -330,20 +308,10 @@ def bulk_delete_events(payload: ManagedBulkDeleteRequest, user: dict = Depends(m
             wanted.append(object_id)
 
     found = {row["_id"]: row for row in managed_events.find(
-        {"_id": {"$in": wanted}, "owner_id": user["id"]}, {"event_name": 1, "archived_at": 1}
+        {"_id": {"$in": wanted}, "owner_id": user["id"]}, {"event_name": 1}
     )}
     for object_id in wanted:
         row = found.get(object_id)
-        if row and row.get("archived_at") is not None:
-            # Kept on the Dean's archive shelf: skipped, with the reason.
-            found.pop(object_id)
-            results.append({
-                "event_id": str(object_id),
-                "event_name": row.get("event_name"),
-                "status": "skipped",
-                "reason": "Archived by the Dean.",
-            })
-            continue
         results.append({
             "event_id": str(object_id),
             "event_name": row.get("event_name") if row else None,
@@ -365,13 +333,11 @@ def bulk_delete_events(payload: ManagedBulkDeleteRequest, user: dict = Depends(m
     logger.info("managed_events_bulk_deleted count=%d owner=%s", len(ids), user["id"])
 
     deleted = len(ids)
-    archived = sum(1 for r in results if r["status"] == "skipped")
     return {
         "success": True,
         "requested_count": len(results),
         "deleted_count": deleted,
-        "not_found_count": len(results) - deleted - archived,
-        "skipped_count": archived,
+        "not_found_count": len(results) - deleted,
         "results": results,
         "message": f"{deleted} event{'s' if deleted != 1 else ''} deleted permanently.",
     }
@@ -392,7 +358,7 @@ def get_event(event_id: str, request: Request, user: dict = Depends(manager_dep)
 @router.patch("/events/{event_id}")
 def update_event(event_id: str, payload: EventUpdateRequest, user: dict = Depends(manager_dep)):
     """Save a draft (`save_as_draft`), or save the event: recorded at once."""
-    event = _own_open_event_or_404(event_id, user)
+    event = _own_event_or_404(event_id, user)
     previous = event.get("status")
 
     if payload.save_as_draft and previous != "draft":
@@ -433,7 +399,7 @@ def update_event(event_id: str, payload: EventUpdateRequest, user: dict = Depend
 
 @router.delete("/events/{event_id}")
 def delete_event(event_id: str, user: dict = Depends(manager_dep)):
-    event = _own_open_event_or_404(event_id, user)
+    event = _own_event_or_404(event_id, user)
     key = str(event["_id"])
     managed_events.delete_one({"_id": event["_id"]})
     for collection in (managed_event_media, managed_event_documents):
@@ -496,7 +462,7 @@ def upload_media(
     file: UploadFile = File(...),
     user: dict = Depends(manager_dep),
 ):
-    event = _own_open_event_or_404(event_id, user)
+    event = _own_event_or_404(event_id, user)
     event_key = str(event["_id"])
 
     info = inspect_media(file)
@@ -512,16 +478,10 @@ def upload_media(
     buffer, size = stream_upload(file, per_file, what="Photos" if is_image else "Videos")
     try:
         check_file_signature(info["extension"], peek_head(buffer))
-        file_name = safe_file_name(file.filename)
-        content_type = info["content_type"]
-        if is_image:
-            # Stored as WebP, as a teacher's photos are (services/photo_webp.py).
-            buffer, size, file_name, content_type = photo_as_webp(
-                buffer, size, extension=info["extension"], file_name=file_name, content_type=content_type,
-            )
         _ensure_bytes_under_cap(managed_event_media, cap_query, size, cap_bytes, media_type)
+        file_name = safe_file_name(file.filename)
         stored = save_upload(
-            buffer, file_name=file_name, content_type=content_type,
+            buffer, file_name=file_name, content_type=info["content_type"],
             kind="media", event_id=event_key, teacher_id=user["id"],
         )
     finally:
@@ -530,7 +490,7 @@ def upload_media(
     document = new_media_document(
         event_id=event_key, storage=stored["storage"], object_key=stored["object_key"],
         file_id=stored["file_id"], file_name=file_name, media_url=stored["url"],
-        media_type=media_type, content_type=content_type, file_size=size,
+        media_type=media_type, content_type=info["content_type"], file_size=size,
         original_name=file.filename,
     )
     _record(managed_event_media, document, stored, cap_query, cap, media_type, cap_bytes)
@@ -560,7 +520,7 @@ def upload_document(
     if cat_param:
         category = cat_param
 
-    event = _own_open_event_or_404(event_id, user)
+    event = _own_event_or_404(event_id, user)
     event_key = str(event["_id"])
 
     info = inspect_document(file)
@@ -644,7 +604,7 @@ def _delete_file(collection, record_id: str, event: dict, not_found: str) -> dic
 
 @router.delete("/events/{event_id}/media/{media_id}")
 def delete_media(event_id: str, media_id: str, user: dict = Depends(manager_dep)):
-    event = _own_open_event_or_404(event_id, user)
+    event = _own_event_or_404(event_id, user)
     record = _delete_file(managed_event_media, media_id, event, "Media not found")
     if event.get("report_photo_ids"):
         managed_events.update_one(
@@ -655,7 +615,7 @@ def delete_media(event_id: str, media_id: str, user: dict = Depends(manager_dep)
 
 @router.delete("/events/{event_id}/documents/{document_id}")
 def delete_document(event_id: str, document_id: str, user: dict = Depends(manager_dep)):
-    event = _own_open_event_or_404(event_id, user)
+    event = _own_event_or_404(event_id, user)
     _delete_file(managed_event_documents, document_id, event, "Document not found")
     return {"success": True, "message": "Document deleted successfully"}
 
@@ -674,7 +634,7 @@ def start_direct_upload(
     background_tasks: BackgroundTasks,
     user: dict = Depends(manager_dep),
 ):
-    event = _own_open_event_or_404(event_id, user)
+    event = _own_event_or_404(event_id, user)
     if not direct_upload.available():
         return {"success": True, "direct": False}
 
@@ -705,7 +665,7 @@ def sign_direct_upload(
     payload: DirectUploadSignRequest | None = None,
     user: dict = Depends(manager_dep),
 ):
-    _own_open_event_or_404(event_id, user)
+    _own_event_or_404(event_id, user)
     session = direct_upload.active_session(
         session_id, scope=UPLOAD_SCOPE, owner_id=user["id"], event_id=event_id
     )
@@ -726,7 +686,7 @@ def complete_direct_upload(
         session_id, scope=UPLOAD_SCOPE, owner_id=user["id"], event_id=event_id
     )
     try:
-        event = _own_open_event_or_404(event_id, user)
+        event = _own_event_or_404(event_id, user)
     except HTTPException:
         direct_upload.discard(session)
         raise
@@ -734,8 +694,6 @@ def complete_direct_upload(
     media_type = session["media_type"]
     caps = direct_upload.caps_for(media_type, get_upload_limits())
     direct_upload.finalize_object(session, per_file_bytes=caps["per_file_bytes"], what=caps["what"])
-    # A photo is stored as WebP, as on the proxied path.
-    direct_upload.convert_photo(session)
 
     collection = managed_event_documents if media_type == "document" else managed_event_media
     document, stored = direct_upload.new_record(session)
@@ -769,7 +727,7 @@ def abort_direct_upload(event_id: str, session_id: str, user: dict = Depends(man
 
 @router.put("/events/{event_id}/report-photos")
 def set_report_photos(event_id: str, payload: ReportPhotosRequest, user: dict = Depends(manager_dep)):
-    event = _own_open_event_or_404(event_id, user)
+    event = _own_event_or_404(event_id, user)
     chosen = report_files.clean_report_choice(payload.photo_ids, str(event["_id"]), managed_event_media)
     managed_events.update_one(
         {"_id": event["_id"]}, {"$set": {"report_photo_ids": chosen, "updated_at": utc_now()}}
@@ -903,7 +861,7 @@ def event_report(
     include_reports: bool | None = Query(default=None),
 ):
     """The report for one event -- generated directly, with optional customization."""
-    event = _own_open_event_or_404(event_id, user)
+    event = _own_event_or_404(event_id, user)
 
     customization = report_files.resolve_customization(
         payload,
@@ -947,14 +905,6 @@ def multi_event_report(payload: ManagedReportRequest, request: Request, user: di
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{missing} of the selected events could not be found.",
-        )
-    shelved = [row.get("event_name") or "Untitled" for row in found.values() if row.get("archived_at") is not None]
-    if shelved:
-        names = ", ".join(f"“{name}”" for name in shelved[:3]) + (f" and {len(shelved) - 3} more" if len(shelved) > 3 else "")
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"The Dean has archived {names}, so a report cannot include {'them' if len(shelved) > 1 else 'it'}. "
-                   "Leave archived events out, or ask the Dean to restore them.",
         )
 
     customization = report_files.resolve_customization(payload.customization)

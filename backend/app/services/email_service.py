@@ -464,8 +464,8 @@ def _badge(label: str, tone: str) -> str:
     )
 
 
-def _event_card(event_name: str, status_label: str, tone: str, *, kicker: str = "Event") -> str:
-    """The event (or research record) the message is about, named once and prominently."""
+def _event_card(event_name: str, status_label: str, tone: str) -> str:
+    """The event the message is about, named once and prominently."""
     return (
         "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" "
         f"bgcolor=\"{_SOFT}\" style=\"margin:4px 0 20px;background-color:{_SOFT};"
@@ -473,7 +473,7 @@ def _event_card(event_name: str, status_label: str, tone: str, *, kicker: str = 
         "<tr><td style=\"padding:18px 20px;\">"
         + _badge(status_label, tone)
         + f"<div style=\"font-family:{_FONT};font-size:13px;line-height:18px;font-weight:600;"
-        f"letter-spacing:0.4px;text-transform:uppercase;color:{_MUTED};padding-bottom:2px;\">{escape(kicker)}</div>"
+        f"letter-spacing:0.4px;text-transform:uppercase;color:{_MUTED};padding-bottom:2px;\">Event</div>"
         f"<div style=\"font-family:{_DISPLAY};font-size:18px;line-height:26px;font-weight:700;"
         f"color:{_INK};overflow-wrap:anywhere;\">{escape(event_name)}</div>"
         "</td></tr></table>"
@@ -569,17 +569,13 @@ def _send_invitation(to_email: str, name: str, token: str, *, added_by: str, pur
     send_email(to_email, subject, text, html)
 
 
-def send_teacher_invitation_email(
-    to_email: str,
-    name: str,
-    token: str,
-    *,
-    added_by: str = "Your Dean",
-    purpose: str = "where teachers submit and manage their events",
-) -> None:
-    """An invitation to a Teacher -- from the Dean by default, or from the
-    Event Manager who added them while recording their research."""
-    _send_invitation(to_email, name, token, added_by=added_by, purpose=purpose)
+def send_teacher_invitation_email(to_email: str, name: str, token: str) -> None:
+    """A Dean's invitation to a Teacher."""
+    _send_invitation(
+        to_email, name, token,
+        added_by="Your Dean",
+        purpose="where teachers submit and manage their events",
+    )
 
 
 def send_event_manager_invitation_email(to_email: str, name: str, token: str) -> None:
@@ -683,41 +679,6 @@ def send_teacher_credentials_email(to_email: str, name: str, temporary_password:
     send_email(to_email, subject, text, html)
 
 
-def send_password_set_by_admin_email(to_email: str, name: str, temporary_password: str) -> None:
-    """The password a Super Admin just reset, for an account of any role.
-
-    The credentials templates above say an account "has been created" and
-    name a role; a reset of an existing Event Manager's (or Dean's) password
-    is neither."""
-    url = settings.login_url
-    subject = "Your Campus Capture password has been reset"
-    text = (
-        f"Hello {name},\n\n"
-        "An administrator has reset the password of your Campus Capture SRHU account.\n\n"
-        f"Email: {to_email}\n"
-        f"Temporary password: {temporary_password}\n\n"
-        f"Sign in here: {url}\n\n"
-        "You will be asked to choose a new password when you sign in.\n"
-        "If you did not expect this, contact the administrator.\n"
-    )
-    html = _layout(
-        "Your password has been reset",
-        _greeting(name)
-        + _p("An administrator has reset the password of your Campus Capture SRHU account. "
-             "Use these details to sign in:", gap=12)
-        + _credentials([
-            ("Email", to_email, False),
-            ("Temporary password", temporary_password, True),
-        ])
-        + _button(url, "Sign in")
-        + _callout("You will be asked to choose a new password when you sign in. "
-                   "If you did not expect this, contact the administrator.", "warn",
-                   heading="Important"),
-        preheader="Your password has been reset. Sign in with the temporary password inside.",
-    )
-    send_email(to_email, subject, text, html)
-
-
 # Badge wording and tone per outcome, beside each email's heading.
 _STATUS_BADGE = {
     "approved": ("Approved", "ok"),
@@ -801,63 +762,3 @@ def send_event_status_email(
         preheader=f"Your event “{event_name}” {sentence}",
     )
     send_email(to_email, f"{heading}: {event_name}", text, html)
-
-
-_RESEARCH_DECISIONS = {
-    "research_verified": ("Research record verified", "has been verified by the Dean.", ("Verified", "ok")),
-    "research_changes": (
-        "Research record needs changes",
-        "needs a correction before the Dean can verify it.",
-        ("Changes requested", "warn"),
-    ),
-    "research_rejected": ("Research record rejected", "was not accepted by the Dean.", ("Rejected", "err")),
-    "research_unverified": (
-        "Research record sent back",
-        "had its verification withdrawn by the Dean and needs a correction.",
-        ("Verification withdrawn", "rose"),
-    ),
-}
-
-
-def send_research_status_email(
-    to_email: str,
-    name: str,
-    title: str,
-    decision: str,
-    remarks: str | None = None,
-    *,
-    link_path: str,
-) -> None:
-    """The Dean's decision on a research record, to the faculty member it
-    belongs to (and to the Event Manager who entered it, if someone else).
-
-    ``link_path`` is the record's page in the recipient's own panel, since a
-    teacher and an Event Manager open it at different addresses.
-    """
-    heading, sentence, (badge_label, badge_tone) = _RESEARCH_DECISIONS.get(
-        decision, ("Research record update", "has been updated.", ("Updated", "neutral"))
-    )
-    url = settings.frontend_route(link_path)
-
-    remark_text = f"\nRemarks from the Dean:\n{remarks}\n" if remarks else ""
-    text = (
-        f"Hello {name},\n\n"
-        f"The research record \"{title}\" {sentence}\n"
-        f"{remark_text}\n"
-        f"View the record: {url}\n"
-    )
-    remark_html = (
-        _callout(escape(remarks).replace("\n", "<br>"), badge_tone, heading="Remarks from the Dean")
-        if remarks
-        else ""
-    )
-    html = _layout(
-        heading,
-        _greeting(name)
-        + _p(f"A research record {escape(sentence)}")
-        + _event_card(title, badge_label, badge_tone, kicker="Research record")
-        + remark_html
-        + _button(url, "View the record"),
-        preheader=f"“{title}” {sentence}",
-    )
-    send_email(to_email, f"{heading}: {title}", text, html)

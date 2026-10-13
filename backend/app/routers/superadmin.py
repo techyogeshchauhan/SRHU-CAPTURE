@@ -23,15 +23,7 @@ from pydantic import ValidationError
 from pymongo.errors import DuplicateKeyError
 
 from app.config import settings
-from app.database import (
-    audit_logs,
-    event_media,
-    events,
-    managed_event_media,
-    managed_events,
-    research_records,
-    users,
-)
+from app.database import audit_logs, event_media, events, managed_events, users
 from app.models.documents import (
     USER_PRIVATE_FIELDS,
     new_user_document,
@@ -105,13 +97,9 @@ def find_user_or_404(user_id: str) -> dict:
 
 
 def set_role(user_id: str, role: str) -> dict:
-    # token_version is bumped so the person's open sessions end, as the Dean's
-    # Promote does: a browser still showing the old role's panel otherwise
-    # failed every action with "Teacher access required" and never said why.
-    # Their next sign-in lands in the right panel.
     updated = users.find_one_and_update(
         {"_id": to_object_id(user_id)},
-        {"$set": {"role": role, "updated_at": utc_now()}, "$inc": {"token_version": 1}},
+        {"$set": {"role": role, "updated_at": utc_now()}},
         return_document=True,
     )
 
@@ -359,14 +347,6 @@ def _send_credentials(
         logger.warning("credentials_email_failed role=%s", role)
 
 
-def _send_reset_password(email: str, name: str, temporary_password: str) -> None:
-    """Send the password a Super Admin just reset. Never raises (a background task)."""
-    try:
-        email_service.send_password_set_by_admin_email(email, name, temporary_password)
-    except email_service.EmailDeliveryError:
-        logger.warning("reset_password_email_failed")
-
-
 # ============================================================
 # EVENT MANAGERS (joined by emailed invitation)
 # ============================================================
@@ -578,8 +558,7 @@ def make_user_dean(
         "success": True,
         "message": (
             f"{updated_user.get('name')} "
-            f"has been made Dean successfully. "
-            "They have been signed out and will see the Dean panel when they sign in again."
+            f"has been made Dean successfully"
         ),
         "user": updated_user
     }
@@ -618,8 +597,7 @@ def make_user_teacher(
         "success": True,
         "message": (
             f"{updated_user.get('name')} "
-            f"has been changed to Teacher. "
-            "They have been signed out and will see the Teacher panel when they sign in again."
+            f"has been changed to Teacher"
         ),
         "user": updated_user
     }
@@ -665,21 +643,11 @@ def delete_user(
     owned = events.count_documents({"teacher_id": canonical_id}) + managed_events.count_documents(
         {"owner_id": canonical_id}
     )
-    # Research records name their faculty member (and whoever entered them);
-    # deleting the account left them as "Unknown faculty member".
-    research = research_records.count_documents(
-        {"$or": [{"faculty_id": canonical_id}, {"created_by": canonical_id}]}
-    )
-    if owned or research:
-        held = [
-            f"{count} {label}{'s' if count != 1 else ''}"
-            for count, label in ((owned, "event"), (research, "research record"))
-            if count
-        ]
+    if owned:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"{user.get('name') or user.get('email')} has {' and '.join(held)}, "
+                f"{user.get('name') or user.get('email')} has {owned} event{'s' if owned != 1 else ''}, "
                 "so the account cannot be deleted permanently. Deactivate it instead: "
                 "they can no longer sign in, and their records are kept."
             ),
@@ -932,27 +900,14 @@ def reset_user_password(
     new_password = payload.new_password or generate_temporary_password()
     password_hash = hash_password(new_password)
 
-    # Invalidate existing sessions by incrementing token_version and require password change.
-    #
-    # The Super Admin handing over a password vouches for the address, as
-    # following a reset link does: an invited Event Manager or teacher who
-    # never used their link was otherwise given a password the login refuses
-    # ("Your email is not confirmed"). The pending invitation stops working --
-    # a password has now been chosen for them.
-    now = utc_now()
+    # Invalidate existing sessions by incrementing token_version and require password change
     users.update_one(
         {"_id": user["_id"]},
         {
             "$set": {
                 "password_hash": password_hash,
                 "must_change_password": True,
-                "email_verified": True,
-                "email_verified_at": user.get("email_verified_at") or now,
-                "verification_token_hash": None,
-                "verification_expires_at": None,
-                "invite_token_hash": None,
-                "invite_expires_at": None,
-                "updated_at": now,
+                "updated_at": utc_now(),
             },
             "$inc": {"token_version": 1},
         },
@@ -960,18 +915,17 @@ def reset_user_password(
 
     email_queued = False
     if email_service.is_configured():
-        # A password-in-the-body template, NOT send_password_reset_email: that
-        # one builds {frontend}/reset-password?token=<arg>, so passing the new
+        # The credentials template, NOT send_password_reset_email: that one
+        # builds {frontend}/reset-password?token=<arg>, so passing the new
         # password put it in a URL -- leaked to mail gateways, browser history
         # and Referer -- and produced a link that could never work, because no
-        # reset_token_hash matches a password. Nor the account-created
-        # credentials templates, which told an Event Manager "A Teacher account
-        # has been created for you".
+        # reset_token_hash matches a password.
         background_tasks.add_task(
-            _send_reset_password,
+            _send_credentials,
             user["email"],
             user.get("name") or "there",
             new_password,
+            user.get("role"),
         )
         email_queued = True
 
@@ -1254,8 +1208,7 @@ def get_dashboard_analytics(
     total_users = users.count_documents({})
     total_teachers = users.count_documents({"role": "teacher"})
     total_deans = users.count_documents({"role": "dean"})
-    # Event Manager uploads count too, as their events do above.
-    total_media = event_media.count_documents({}) + managed_event_media.count_documents({})
+    total_media = event_media.count_documents({})
 
     # 2. Monthly Trend (last 12 months)
     pipeline_monthly = [
