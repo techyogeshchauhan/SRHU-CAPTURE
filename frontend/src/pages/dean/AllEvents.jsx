@@ -1060,7 +1060,7 @@ function AllEvents() {
           title="All Events Review Queue"
           showReviewQueueLink={false}
           selectedIds={effectiveSelectedIds}
-          defaultExpanded={false}
+          defaultExpanded
           onToggleSelect={toggleEvent}
           onToggleSelectGroup={toggleGroup}
           onClearSelection={() => setSelected(new Map())}

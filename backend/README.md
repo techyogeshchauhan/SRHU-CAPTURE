@@ -46,6 +46,24 @@ every other device gets "Failed to fetch" on login and signup:
 .venv\Scripts\uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+On Windows, allow the API through Windows Firewall for devices on the same
+private network by running this once in an Administrator PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\allow-lan-firewall.ps1
+```
+
+The helper allows only TCP ports 8000 and 8001 from the local subnet on the
+Private network profile. Port 8001 is used by the current frontend `.env`; the
+default `run.py` backend uses port 8000. It does not open the database port.
+
+On a second device, open the frontend using the host computer's IPv4 address
+from `ipconfig`, for example `http://192.168.1.20:5173`. Do not use
+`localhost:5173` on the second device; `localhost` always means that device
+itself. The development frontend maps its configured loopback API address to
+the host name in the page URL, and the development CORS pattern accepts private
+LAN origins.
+
 Settings are read from `.env` at startup; restart the server after editing it.
 
 `create_superadmin.py` prompts for a password when `--password` /

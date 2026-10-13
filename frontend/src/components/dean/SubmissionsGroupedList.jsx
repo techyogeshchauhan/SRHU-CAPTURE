@@ -153,6 +153,19 @@ export default function SubmissionsGroupedList({
     }
   }, [defaultExpanded, yearGroups]);
 
+  // A category selected from the dashboard is passed through as
+  // selectedEventType. Expand every matching year and month after its
+  // filtered records arrive so the Dean immediately sees the contents.
+  // Their normal controls remain available afterward.
+  useEffect(() => {
+    if (!selectedEventType || yearGroups.length === 0) return;
+
+    setExpandedYears(new Set(yearGroups.map((group) => group.year)));
+    setExpandedMonths(
+      new Set(yearGroups.flatMap((group) => group.months.map((month) => month.monthKey))),
+    );
+  }, [selectedEventType, yearGroups]);
+
   // Map of event by ID for quick lookups
   const eventMap = useMemo(() => new Map(events.map((e) => [e.id, e])), [events]);
 
@@ -746,6 +759,15 @@ function SubmissionRow({
   allowDecisions,
 }) {
   const fields = useMemo(() => readEventFields(event), [event]);
+  const actualParticipantCount =
+    event.participant_count ??
+    event.actual_participants ??
+    event.number_of_participants ??
+    null;
+  const participantCount =
+    actualParticipantCount ?? event.expected_participants ?? fields.expectedParticipants;
+  const participantLabel =
+    actualParticipantCount == null ? "Expected participants" : "Participants";
   const dateFormatted = formatRowDate(
     event.event_date || event.start_date || event.created_at
   );
@@ -789,13 +811,15 @@ function SubmissionRow({
           </span>
 
           <div className="flex min-w-0 items-center gap-2">
-            <span
-              className="truncate font-semibold text-ink text-sm hover:text-accent cursor-pointer"
+            <button
+              type="button"
+              className="min-w-0 truncate text-left font-semibold text-ink text-sm hover:text-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent rounded-sm"
               onClick={onToggleExpand}
+              aria-expanded={isExpanded}
               title={event.event_name}
             >
               {event.event_name}
-            </span>
+            </button>
 
             {/* Muted details line */}
             <span className="hidden truncate text-xs text-muted md:inline">
@@ -877,7 +901,7 @@ function SubmissionRow({
           </div>
 
           {/* Grid: Submitter, Schedule, Venue */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 rounded-xl border border-line/50 bg-surface/80 p-4 text-xs">
+          <div className="grid grid-cols-1 gap-3 rounded-xl border border-line/50 bg-surface/80 p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-1">
               <p className="text-muted font-medium flex items-center gap-1.5">
                 <IconCalendar className="h-3.5 w-3.5 text-accent" />
@@ -909,6 +933,13 @@ function SubmissionRow({
               <p className="text-muted font-medium">Faculty / Submitter</p>
               <SubmitterLine event={event} />
             </div>
+
+            {participantCount !== "" && participantCount != null && (
+              <div className="space-y-1">
+                <p className="text-muted font-medium">{participantLabel}</p>
+                <p className="font-semibold text-ink">{participantCount}</p>
+              </div>
+            )}
           </div>
 
           {/* Description if present */}
