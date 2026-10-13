@@ -18,7 +18,9 @@ const MB = 1024 * 1024;
 /** PRD 7: ten photos, 20 MB each, four formats. */
 export const MAX_IMAGE_COUNT = DEFAULT_UPLOAD_LIMITS.max_photos_per_event;
 export const MAX_IMAGE_SIZE = DEFAULT_UPLOAD_LIMITS.max_photo_size_mb * MB;
-export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+export const ALLOWED_IMAGE_TYPES = [
+  "image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/webp", "image/gif",
+];
 export const ALLOWED_IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif"];
 
 /** PRD 11: one combined budget, no cap on how many files it is split across. */
