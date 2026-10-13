@@ -228,26 +228,28 @@ export default function SubmissionsGroupedList({
   // ============================================
 
   const toggleExpandYear = (year) => {
+    const isCurrentlyExpanded = expandedYears.has(year);
     setExpandedYears((prev) => {
       const next = new Set(prev);
-      if (next.has(year)) {
+      if (isCurrentlyExpanded) {
         next.delete(year);
-        // Also collapse its months when the year is collapsed
-        const group = yearGroups.find((g) => g.year === year);
-        if (group) {
-          setExpandedMonths((mPrev) => {
-            const mNext = new Set(mPrev);
-            for (const m of group.months) {
-              mNext.delete(m.monthKey);
-            }
-            return mNext;
-          });
-        }
       } else {
         next.add(year);
       }
       return next;
     });
+
+    const group = yearGroups.find((item) => item.year === year);
+    if (group) {
+      setExpandedMonths((prev) => {
+        const next = new Set(prev);
+        for (const month of group.months) {
+          if (isCurrentlyExpanded) next.delete(month.monthKey);
+          else next.add(month.monthKey);
+        }
+        return next;
+      });
+    }
   };
 
   const toggleExpandMonth = (monthKey) => {
