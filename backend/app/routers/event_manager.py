@@ -820,6 +820,14 @@ def _report_file_name(name: str | None) -> str:
     return report_file_name(name)
 
 
+def _reject_draft_report_events(events: list[dict]) -> None:
+    if any(event.get("status") == "draft" for event in events):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Draft events cannot be included in the report. Please select only non-draft events to generate the report.",
+        )
+
+
 def _record_reports(events: list[dict], customization: dict | None, user: dict) -> None:
     """Note that these events have a report, so the Dean's page shows it as
     generated -- for a consolidated report as much as a single one."""
@@ -862,6 +870,7 @@ def event_report(
 ):
     """The report for one event -- generated directly, with optional customization."""
     event = _own_event_or_404(event_id, user)
+    _reject_draft_report_events([event])
 
     customization = report_files.resolve_customization(
         payload,
@@ -906,6 +915,7 @@ def multi_event_report(payload: ManagedReportRequest, request: Request, user: di
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{missing} of the selected events could not be found.",
         )
+    _reject_draft_report_events(list(found.values()))
 
     customization = report_files.resolve_customization(payload.customization)
 

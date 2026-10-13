@@ -220,6 +220,7 @@ function MyEvents() {
   // Delete modal state
   const [deletingEvent, setDeletingEvent] = useState(null);
   const [deletingLoading, setDeletingLoading] = useState(false);
+  const [draftReportAlertOpen, setDraftReportAlertOpen] = useState(false);
 
   const fetchEvents = async () => {
     try {
@@ -442,6 +443,10 @@ function MyEvents() {
   const allVisibleSelected =
     visibleSelectable.length > 0 && visibleSelectable.every((id) => selected.has(id));
   const selectedItems = allCombinedItems.filter((item) => selected.has(item.id));
+  const draftSelectedItems = selectedItems.filter(
+    (item) => item.isDraft || String(item.status || "").toLowerCase() === "draft",
+  );
+  const hasDraftSelected = draftSelectedItems.length > 0;
   const selectedIds = selectedItems.filter(reportable).map((item) => item.id);
   const deletableSelected = panel.approval ? selectedItems.filter(canDeleteItem) : selectedItems;
   const submittableSelected = selectedItems.filter((item) => item.status === "draft" && !item.isDraft);
@@ -468,6 +473,10 @@ function MyEvents() {
   };
 
   const handleReportSelected = () => {
+    if (hasDraftSelected) {
+      setDraftReportAlertOpen(true);
+      return;
+    }
     if (selectedIds.length > MAX_EVENTS_PER_REPORT) {
       setError(`A report can cover at most ${MAX_EVENTS_PER_REPORT} events; ${selectedIds.length} are selected.`);
       return;
@@ -817,7 +826,7 @@ function MyEvents() {
                     <button
                       type="button"
                       onClick={handleReportSelected}
-                      disabled={selectedIds.length === 0 || Boolean(reportingId)}
+                      disabled={(selectedIds.length === 0 && !hasDraftSelected) || Boolean(reportingId)}
                       className="btn btn-brand btn-xs"
                     >
                       {reportingId === "selected" ? <span className="spin h-3 w-3" /> : <IconDownload />}
@@ -1067,6 +1076,47 @@ function MyEvents() {
           )}
         </div>
       </div>
+
+      {/* Draft report guard: branded in-app alert with the selected drafts. */}
+      <Modal
+        open={draftReportAlertOpen}
+        onClose={() => setDraftReportAlertOpen(false)}
+        eyebrow="Report not generated"
+        title="Draft events selected"
+        subtitle={`${draftSelectedItems.length} draft event${draftSelectedItems.length === 1 ? " is" : "s are"} in your selection`}
+        footer={
+          <button
+            type="button"
+            onClick={() => setDraftReportAlertOpen(false)}
+            className="btn btn-brand btn-sm"
+          >
+            Review selection
+          </button>
+        }
+      >
+        <div className="flex items-start gap-3">
+          <span
+            className="icon-tile icon-tile-track shrink-0"
+            style={{ "--track": trackOf("rejected") }}
+          >
+            <IconAlertTriangle />
+          </span>
+          <p className="text-sm leading-6 text-ink">
+            Draft events cannot be included in the report. Please select only non-draft events to
+            generate the report.
+          </p>
+        </div>
+        <div className="mt-5 rounded-xl border hairline bg-raised/50 p-3">
+          <p className="eyebrow mb-2">Drafts in your selection</p>
+          <ul className="max-h-32 space-y-1 overflow-y-auto text-sm text-ink">
+            {draftSelectedItems.map((item) => (
+              <li key={item.id} className="truncate">
+                {item.event_name || item.eventName || "Untitled draft"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Modal>
 
       {/* Delete Confirmation Modal */}
       <Modal
