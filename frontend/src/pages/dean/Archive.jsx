@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiJson, isAbortError } from "../../services/api";
 import { fetchCurrentUser, signOut } from "../../services/auth";
 import DeanShell from "../../components/dean/DeanShell";
+import PageHero from "../../components/teacher/PageHero";
 import EventsTable from "../../components/dean/EventsTable";
 import Modal from "../../components/teacher/Modal";
 import Pagination from "../../components/common/Pagination";
@@ -193,20 +194,29 @@ function Archive() {
         )}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4">
-        <div className="glass flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-          <div>
-            <p className="eyebrow text-accent">Dean Panel</p>
-            <h1 className="h3 text-ink">Archive</h1>
-          </div>
-          <p className="prose-muted text-xs">
-            {total === 0
-              ? "Nothing archived"
-              : `${total} archived event${total === 1 ? "" : "s"}`}
-          </p>
+      {/* Same frame as All Events: page padding around the hero and list. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 px-4 py-4 sm:px-5 lg:px-6 lg:py-6">
+        <div className="shrink-0">
+          <PageHero
+            compact
+            title="Event"
+            accent="Archive"
+            actions={
+              <span className="chip chip-sm">
+                {total === 0
+                  ? "Nothing archived"
+                  : `${total} archived event${total === 1 ? "" : "s"}`}
+              </span>
+            }
+          />
         </div>
 
-        <div className="glass relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {/* An empty archive is a short card, not a screen-high blank one. */}
+        <div
+          className={`glass relative flex min-h-0 flex-col overflow-hidden ${
+            !loading && total === 0 ? "" : "flex-1"
+          }`}
+        >
           {loading && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-surface/70 backdrop-blur-[1px]">
               <div className="flex items-center gap-2.5 text-sm font-medium text-muted">

@@ -1,42 +1,149 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { fetchCurrentUser, signOut } from "../../services/auth";
 import { apiJson, isAbortError } from "../../services/api";
 import DeanShell from "../../components/dean/DeanShell";
-import Modal from "../../components/teacher/Modal";
 import PageHero from "../../components/teacher/PageHero";
-import StatusChip from "../../components/teacher/StatusChip";
 import StatCard from "../../components/common/StatCard";
 import { programShare } from "../../components/dean/programShades";
 import { trackOf } from "../../components/teacher/status";
 import useThemeTokens from "../../components/theme/useThemeTokens";
-import { formatRowDate } from "../../utils/submissionGrouping";
+import { formatTime12h, localDateKey } from "../../utils/dates";
+import {
+  monthlyActivity,
+  upcomingEvents,
+} from "../../utils/deanInsights";
 import {
   IconAlertTriangle,
   IconArrowRight,
   IconCalendar,
   IconChartBar,
-  IconChartPie,
-  IconCheck,
   IconCheckCircle,
-  IconClock,
-  IconEye,
-  IconInbox,
   IconLayers,
   IconRefresh,
-  IconX,
   IconXCircle,
 } from "../../components/teacher/icons";
-import {
-  canApprove,
-  canReject,
-  getApproveLabel,
-  getStatusBucket,
-  normalizeStatus,
-} from "../../utils/constants";
 
 const TOTAL_TRACK = "#0EA5E9"; // sky
+
+/**
+ * The monthly-activity stack, bottom to top. Review outcomes are states, so
+ * they wear the reserved status colours -- the same ones as the KPI cards
+ * above -- and the legend carries their names and totals, so identity is
+ * never colour alone.
+ */
+const ACTIVITY_SERIES = [
+  { key: "approved", label: "Approved", color: trackOf("approved") },
+  { key: "pending", label: "Pending", color: trackOf("pending") },
+  { key: "rejected", label: "Rejected", color: trackOf("rejected") },
+];
+
+const MONTH_LONG = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** "Jan" on the axis, with the year on January and on the first month. */
+const monthTick = (key, index) => {
+  const [year, month] = String(key).split("-");
+  const label = MONTH_LONG[Number(month) - 1]?.slice(0, 3) || "";
+  return index === 0 || month === "01" ? `${label} ’${year.slice(2)}` : label;
+};
+
+const monthName = (key) => {
+  const [year, month] = String(key).split("-");
+  return `${MONTH_LONG[Number(month) - 1] || ""} ${year}`;
+};
+
+const SEGMENT_GAP = 2;
+const SEGMENT_RADIUS = 4;
+
+/**
+ * One stacked segment. The topmost non-empty segment of a month gets the
+ * rounded cap; the others give up 2px at their top, which leaves a gap of
+ * surface between neighbours instead of a stroke drawn round them. Months
+ * still ahead are drawn faint: planned, not yet held.
+ */
+function StackSegment({ x, y, width, height, fill, payload, series }) {
+  if (!height || height <= 0 || !width) return null;
+
+  const topKey = [...ACTIVITY_SERIES].reverse().find((item) => payload?.[item.key] > 0)?.key;
+  const opacity = payload?.isFuture ? 0.4 : 1;
+
+  if (series !== topKey) {
+    const shaved = height > SEGMENT_GAP ? SEGMENT_GAP : 0;
+    return (
+      <rect
+        x={x}
+        y={y + shaved}
+        width={width}
+        height={height - shaved}
+        fill={fill}
+        fillOpacity={opacity}
+      />
+    );
+  }
+
+  const r = Math.min(SEGMENT_RADIUS, width / 2, height);
+  const bottom = y + height;
+  return (
+    <path
+      d={`M${x},${bottom} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + width - r},${y} Q${x + width},${y} ${x + width},${y + r} L${x + width},${bottom} Z`}
+      fill={fill}
+      fillOpacity={opacity}
+    />
+  );
+}
+
+/** The month under the pointer: its split, its total, and what a click does. */
+function MonthTooltip({ active, payload }) {
+  const month = active ? payload?.[0]?.payload : null;
+  if (!month) return null;
+
+  return (
+    <div className="min-w-44 rounded-xl border hairline bg-surface px-3.5 py-2.5 text-xs shadow-lg">
+      <p className="font-semibold text-ink">
+        {monthName(month.key)}
+        {month.isFuture && <span className="ml-1.5 font-normal text-muted">· planned</span>}
+      </p>
+      <ul className="mt-1.5 space-y-1">
+        {ACTIVITY_SERIES.map((item) => (
+          <li key={item.key} className="flex items-center gap-2">
+            <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: item.color }} />
+            <span className="flex-1 text-muted">{item.label}</span>
+            <span className="num font-semibold text-ink">{month[item.key]}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5 flex justify-between border-t hairline pt-1.5 text-muted">
+        Total <span className="num font-semibold text-ink">{month.total}</span>
+      </p>
+      {month.total > 0 && <p className="mt-1 text-[11px] text-accent">Click to open these events</p>}
+    </div>
+  );
+}
+
+/** "21" over "AUG" for an upcoming event, read straight off the date string. */
+function DateBlock({ date }) {
+  const [, month, day] = String(date || "").split("-");
+  return (
+    <span className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-lg border hairline bg-raised/50 leading-none">
+      <span className="font-display text-base font-bold text-ink">{Number(day) || "–"}</span>
+      <span className="mt-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted">
+        {MONTH_LONG[Number(month) - 1]?.slice(0, 3) || ""}
+      </span>
+    </span>
+  );
+}
 
 const DEAN_EVENTS_CACHE_KEY = "cc_dean_events_count";
 
@@ -63,60 +170,11 @@ function setCachedEventsCount(count) {
   }
 }
 
-/**
- * Filter predicate: only events awaiting Dean review.
- * Includes pending, submitted, under_review, and resubmitted/correction events.
- * Excludes already approved, completed, published, recorded, rejected, revoked, and draft.
- */
-function isAwaitingDeanReview(event) {
-  if (!event) return false;
-  const status = normalizeStatus(event.status);
-  if (
-    status === "approved" ||
-    status === "published" ||
-    status === "completed" ||
-    status === "recorded" ||
-    status === "in_progress" ||
-    status === "draft" ||
-    status === "rejected" ||
-    status === "revoked"
-  ) {
-    return false;
-  }
-  return (
-    getStatusBucket(status) === "pending" ||
-    status === "resubmitted" ||
-    status === "needs_correction" ||
-    status === "changes_requested" ||
-    status.includes("resubmit") ||
-    status.includes("correct") ||
-    Boolean(event.is_resubmitted)
-  );
-}
-
-/**
- * Earliest date timestamp for sorting oldest-waiting first.
- */
-function getWaitingTimestamp(event) {
-  if (!event) return Infinity;
-  const raw =
-    event.submitted_at ||
-    event.created_at ||
-    event.event_date ||
-    event.start_date ||
-    event.date;
-  if (!raw) return Infinity;
-  const t = new Date(raw).getTime();
-  return Number.isNaN(t) ? Infinity : t;
-}
+const UPCOMING_PREVIEW = 4;
 
 export default function DeanDashboard() {
   const navigate = useNavigate();
   const tokens = useThemeTokens();
-
-  // "overview" is the numbers and the program mix; "submissions" is the Review Queue
-  // of items awaiting the Dean's action.
-  const [activeView, setActiveView] = useState("overview");
 
   // ============================================
   // STATES
@@ -126,7 +184,6 @@ export default function DeanDashboard() {
     const cached = getCachedEventsCount();
     return {
       total_events: cached ?? 0,
-      pending_events: 0,
       approved_events: 0,
       rejected_events: 0,
     };
@@ -137,17 +194,9 @@ export default function DeanDashboard() {
   // Signed-in Dean, used for the header and rail account blocks.
   const [deanProfile, setDeanProfile] = useState(null);
 
-  const [loadingStats, setLoadingStats] = useState(true);
   const [loadingEvents, setLoadingEvents] = useState(true);
 
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  // Decision state for direct Approve / Reject in the Review Queue
-  const [decision, setDecision] = useState(null);
-  const [rejectReason, setRejectReason] = useState("");
-  const [reasonError, setReasonError] = useState("");
-  const [processingId, setProcessingId] = useState(null);
 
   // ============================================
   // LOGOUT
@@ -174,36 +223,6 @@ export default function DeanDashboard() {
   };
 
   // ============================================
-  // LOAD STATS
-  // ============================================
-
-  const loadStats = async () => {
-    try {
-      setLoadingStats(true);
-
-      const data = await apiJson("/dean/dashboard/stats");
-
-      const total = data?.total_events ?? 0;
-      if (total > 0 || getCachedEventsCount() === null) {
-        setCachedEventsCount(total);
-      }
-
-      setStats({
-        total_events: total,
-        pending_events: data?.pending_events || 0,
-        approved_events: data?.approved_events || 0,
-        rejected_events: data?.rejected_events || 0,
-      });
-    } catch (err) {
-      console.error("Stats error:", err);
-      if (isSignedOut(err)) return;
-      setError(err?.message || "Unable to load dashboard statistics.");
-    } finally {
-      setLoadingStats(false);
-    }
-  };
-
-  // ============================================
   // LOAD EVENTS
   // ============================================
 
@@ -224,9 +243,16 @@ export default function DeanDashboard() {
 
       if (controller.signal.aborted) return;
       const loadedEvents = data?.events || [];
-      if (loadedEvents.length > 0) {
-        setCachedEventsCount(loadedEvents.length);
+      const counts = data?.counts || {};
+      const total = counts.all ?? data?.total ?? loadedEvents.length;
+      if (total > 0 || getCachedEventsCount() === null) {
+        setCachedEventsCount(total);
       }
+      setStats({
+        total_events: total,
+        approved_events: counts.approved || 0,
+        rejected_events: counts.rejected || 0,
+      });
       setEvents(loadedEvents);
     } catch (err) {
       if (controller.signal.aborted || isAbortError(err)) return;
@@ -257,7 +283,6 @@ export default function DeanDashboard() {
   };
 
   useEffect(() => {
-    loadStats();
     loadEvents();
     loadDeanProfile();
   }, []);
@@ -267,111 +292,12 @@ export default function DeanDashboard() {
   // ============================================
 
   const refreshAfterNotification = () => {
-    loadStats();
     loadEvents();
   };
 
   const refreshDashboard = async () => {
     setError("");
-    await Promise.all([loadStats(), loadEvents()]);
-  };
-
-  // Auto-dismiss success toast
-  useEffect(() => {
-    if (!success) return undefined;
-    const timer = setTimeout(() => setSuccess(""), 4500);
-    return () => clearTimeout(timer);
-  }, [success]);
-
-  // ============================================
-  // REVIEW QUEUE (Oldest-waiting first)
-  // ============================================
-
-  const reviewQueueEvents = useMemo(() => {
-    return (events || [])
-      .filter(isAwaitingDeanReview)
-      .sort((a, b) => {
-        const diff = getWaitingTimestamp(a) - getWaitingTimestamp(b);
-        if (diff !== 0) return diff;
-        return (a.id || "").localeCompare(b.id || "");
-      });
-  }, [events]);
-
-  // ============================================
-  // DECISION HANDLERS (Approve / Reject)
-  // ============================================
-
-  const openDecision = (event, kind) => {
-    setDecision({ event, kind });
-    setRejectReason("");
-    setReasonError("");
-  };
-
-  const closeDecision = () => {
-    if (processingId) return;
-    setDecision(null);
-    setRejectReason("");
-    setReasonError("");
-  };
-
-  const confirmApprove = async () => {
-    const event = decision?.event;
-    if (!event) return;
-
-    try {
-      setProcessingId(event.id);
-      setError("");
-      setSuccess("");
-
-      const data = await apiJson(`/dean/events/${event.id}/approve`, {
-        method: "PATCH",
-      });
-
-      setSuccess(data?.message || "Event approved successfully.");
-      setDecision(null);
-      await Promise.all([loadStats(), loadEvents()]);
-    } catch (err) {
-      console.error("Approve error:", err);
-      if (isSignedOut(err)) return;
-      setError(err?.message || "Failed to approve event.");
-      setDecision(null);
-    } finally {
-      setProcessingId(null);
-    }
-  };
-
-  const confirmReject = async () => {
-    const event = decision?.event;
-    if (!event) return;
-
-    const reason = rejectReason.trim();
-    if (!reason) {
-      setReasonError("A reason is required — the teacher sees it verbatim.");
-      return;
-    }
-
-    try {
-      setProcessingId(event.id);
-      setError("");
-      setSuccess("");
-      setReasonError("");
-
-      const data = await apiJson(`/dean/events/${event.id}/reject`, {
-        method: "PATCH",
-        body: { rejection_reason: reason },
-      });
-
-      setSuccess(data?.message || "Event rejected successfully.");
-      setDecision(null);
-      await Promise.all([loadStats(), loadEvents()]);
-    } catch (err) {
-      console.error("Reject error:", err);
-      if (isSignedOut(err)) return;
-      setError(err?.message || "Failed to reject event.");
-      setDecision(null);
-    } finally {
-      setProcessingId(null);
-    }
+    await loadEvents();
   };
 
   // ============================================
@@ -388,28 +314,48 @@ export default function DeanDashboard() {
     navigate(`/dean/events?type=${encodeURIComponent(name)}`);
   };
 
+  // The Overview panels, all from the event list already loaded above.
+  const today = localDateKey();
+  const activity = useMemo(() => monthlyActivity(events), [events]);
+  const activityTotals = useMemo(
+    () =>
+      activity.reduce(
+        (sum, month) => ({
+          approved: sum.approved + month.approved,
+          pending: sum.pending + month.pending,
+          rejected: sum.rejected + month.rejected,
+          total: sum.total + month.total,
+        }),
+        { approved: 0, pending: 0, rejected: 0, total: 0 },
+      ),
+    [activity],
+  );
+  const upcoming = useMemo(() => upcomingEvents(events), [events]);
+  // A month opens All Events on that month's event dates.
+  const openMonth = (key) => {
+    const month = activity.find((item) => item.key === key);
+    if (!month || month.total === 0) return;
+    navigate(`/dean/events?start_date=${month.start}&end_date=${month.end}`);
+  };
+
+  // Each card opens All Events on the matching status tab; the tab keys are
+  // the ones useTableQuery reads from ?status=.
   const statCards = [
     {
       key: "total",
       label: "Total Events",
       value: stats.total_events,
       hint: "Everything submitted across campus",
+      to: "/dean/events",
       track: TOTAL_TRACK,
       Icon: IconLayers,
-    },
-    {
-      key: "pending",
-      label: "Pending",
-      value: stats.pending_events,
-      hint: "Awaiting your decision",
-      track: trackOf("pending"),
-      Icon: IconClock,
     },
     {
       key: "approved",
       label: "Approved",
       value: stats.approved_events,
       hint: "Cleared to go ahead",
+      to: "/dean/events?status=approved",
       track: trackOf("approved"),
       Icon: IconCheckCircle,
     },
@@ -418,14 +364,13 @@ export default function DeanDashboard() {
       label: "Rejected",
       value: stats.rejected_events,
       hint: "Sent back to the teacher",
+      to: "/dean/events?status=rejected",
       track: trackOf("rejected"),
       Icon: IconXCircle,
     },
   ];
 
-  const busy = loadingStats || loadingEvents;
-  const decisionEvent = decision?.event;
-
+  const busy = loadingEvents;
   const resolvedEventCount = useMemo(() => {
     const live = stats.total_events || events.length;
     if (live > 0) return live;
@@ -445,17 +390,14 @@ export default function DeanDashboard() {
       profile={deanProfile}
       onLogout={handleLogout}
       railBadge={resolvedEventCount}
-      railNote="Teachers propose events, you approve them. Pending submissions are the queue that needs you."
+      railNote="Track campus events, monthly activity, and upcoming schedules."
       onNotification={refreshAfterNotification}
     >
-      <div className="mx-auto w-full max-w-wrap px-5 py-8 sm:px-8">
+      <div className="mx-auto w-full max-w-wrap px-5 py-6 sm:px-8">
         <PageHero
-          eyebrow="Dean Panel"
+          compact
           title="Campus Event"
           accent="Overview"
-          subtitle={`Welcome back, ${
-            deanProfile?.name || "Dean"
-          }. Review, filter and track every event submitted across campus.`}
           actions={
             <>
               <button
@@ -467,11 +409,6 @@ export default function DeanDashboard() {
                 {busy ? <span className="spin h-4 w-4" /> : <IconRefresh />}
                 Refresh
               </button>
-
-              <Link to="/dean/events" className="btn btn-primary">
-                <IconCalendar />
-                Review queue
-              </Link>
             </>
           }
         />
@@ -498,507 +435,213 @@ export default function DeanDashboard() {
           </div>
         )}
 
-        {success && (
-          <div
-            className="mt-6 flex items-start gap-3 rounded-2xl border p-4"
-            data-tint=""
-            style={{ "--track": trackOf("approved") }}
-            role="status"
-          >
-            <IconCheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-ink">Success</p>
-              <p className="prose-muted mt-0.5 text-sm">{success}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSuccess("")}
-              className="btn btn-ghost btn-xs shrink-0"
-            >
-              <IconX className="h-4 w-4" />
-            </button>
-          </div>
-        )}
+        {/* ======================================================= ONE VIEW
+            Event totals, monthly activity, and upcoming events. */}
 
-        {/* ------------------------------------------------------- the views */}
-        <div
-          role="tablist"
-          aria-label="Dashboard views"
-          className="mt-7 flex flex-wrap items-center gap-1.5"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeView === "overview"}
-            onClick={() => setActiveView("overview")}
-            className="tab"
-          >
-            <IconChartPie className="h-4 w-4" />
-            Overview
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeView === "submissions"}
-            onClick={() => setActiveView("submissions")}
-            className="tab"
-          >
-            <IconInbox className="h-4 w-4" />
-            Submissions
-            <span className="tab-count">{reviewQueueEvents.length}</span>
-          </button>
+        {/* The shared KPI cards, compact */}
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
+          {statCards.map((card, i) => (
+            <StatCard
+              key={card.key}
+              compact
+              index={i}
+              to={card.to}
+              label={card.label}
+              value={loadingEvents ? "—" : card.value}
+              Icon={card.Icon}
+              track={card.track}
+              hint={card.hint}
+            />
+          ))}
         </div>
 
-        {/* ==================================================== OVERVIEW === */}
-        {activeView === "overview" && (
-          <>
-            {/* The shared KPI cards */}
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-              {statCards.map((card, i) => (
-                <StatCard
-                  key={card.key}
-                  index={i}
-                  label={card.label}
-                  value={loadingStats ? "—" : card.value}
-                  Icon={card.Icon}
-                  track={card.track}
-                  hint={card.hint}
-                />
-              ))}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12">
+          {/* ---- Monthly activity ---- */}
+          <section className="glass reveal overflow-hidden lg:col-span-12" style={{ "--i": 5 }}>
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b hairline px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <IconChartBar className="h-4 w-4 text-accent" />
+                <h2 className="h3 text-base text-ink">Monthly activity</h2>
+              </div>
+
+              <ul className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" aria-label="Legend">
+                {ACTIVITY_SERIES.map((item) => (
+                  <li key={item.key} className="flex items-center gap-1.5 text-muted">
+                    <span className="h-2.5 w-2.5 rounded-sm" style={{ background: item.color }} />
+                    {item.label}
+                    <span className="num font-semibold text-ink">{activityTotals[item.key]}</span>
+                  </li>
+                ))}
+                <li className="flex items-center gap-1.5 text-muted">
+                  <span className="h-2.5 w-2.5 rounded-sm opacity-40" style={{ background: trackOf("approved") }} />
+                  Ahead
+                </li>
+              </ul>
             </div>
 
-            {/* ---------------------------------------------- program mix */}
-            <section className="glass reveal mt-6 overflow-hidden" style={{ "--i": 5 }}>
-              <div className="flex flex-col gap-3 border-b hairline px-6 py-5 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="icon-tile">
-                    <IconChartPie />
-                  </span>
-                  <div>
-                    <p className="eyebrow">Distribution</p>
-                    <h2 className="h3 text-ink">Programs by type</h2>
-                    <p className="prose-muted mt-0.5 text-xs">
-                      Pick a program to view its events.
-                    </p>
-                  </div>
+            <div className="px-4 pb-3 pt-3">
+              {loadingEvents ? (
+                <div className="flex h-40 items-center justify-center">
+                  <span className="spin h-8 w-8 text-accent" />
                 </div>
-              </div>
-
-              <div className="p-6">
-                {loadingEvents ? (
-                  <div className="flex h-65 flex-col items-center justify-center gap-3">
-                    <span className="spin h-10 w-10 text-accent" />
-                    <p className="prose-muted text-sm">Loading programs…</p>
-                  </div>
-                ) : programMix.length === 0 ? (
-                  <div className="flex h-65 flex-col items-center justify-center text-center">
-                    <span className="icon-tile mb-4 h-14 w-14 rounded-2xl">
-                      <IconChartBar className="h-6 w-6" />
-                    </span>
-                    <p className="h3 text-ink">No program data yet</p>
-                    <p className="prose-muted mt-1 text-sm">
-                      Once teachers submit events, their mix appears here.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-8 lg:flex-row">
-                    {/* The ring */}
-                    <div
-                      className="h-60 w-full shrink-0 lg:w-75"
-                      role="img"
-                      aria-label={`Programs by type: ${programMix
-                        .map((entry) => `${entry.name} ${entry.value}`)
-                        .join(", ")}`}
-                    >
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={programMix}
-                            dataKey="value"
-                            nameKey="name"
-                            cx="50%"
-                            cy="50%"
-                            outerRadius={104}
-                            innerRadius={68}
-                            paddingAngle={2}
-                            onClick={(slice) => handleTypeSelect(slice?.name)}
-                            cursor="pointer"
-                            isAnimationActive={false}
-                          >
-                            {programMix.map((entry) => (
-                              <Cell
-                                key={entry.name}
-                                fill={entry.shade}
-                                stroke={`rgb(${tokens.surface})`}
-                                strokeWidth={2}
-                              />
-                            ))}
-                          </Pie>
-
-                          <text
-                            x="50%"
-                            y="50%"
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                            fill={`rgb(${tokens.ink})`}
-                            style={{ fontFamily: "Sora, system-ui, sans-serif" }}
-                          >
-                            <tspan x="50%" dy="-6" fontSize="28" fontWeight="700">
-                              {events.length}
-                            </tspan>
-                            <tspan
-                              x="50%"
-                              dy="26"
-                              fontSize="11"
-                              fontWeight="600"
-                              letterSpacing="1.6"
-                              fill={`rgb(${tokens.muted})`}
-                            >
-                              EVENTS
-                            </tspan>
-                          </text>
-
-                          <Tooltip
-                            cursor={false}
-                            formatter={(value, name) => [
-                              `${value} event${value !== 1 ? "s" : ""}`,
-                              name,
-                            ]}
-                            contentStyle={{
-                              background: `rgb(${tokens.surface})`,
-                              border: "1px solid rgb(15 23 42 / .1)",
-                              borderRadius: "0.75rem",
-                              boxShadow: "0 18px 50px -20px rgb(15 23 42 / .28)",
-                              fontSize: "0.8rem",
-                              padding: "0.5rem 0.7rem",
-                            }}
-                            itemStyle={{ color: `rgb(${tokens.ink})` }}
-                            labelStyle={{ color: `rgb(${tokens.muted})` }}
-                          />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-
-                    {/* The rows */}
-                    <ul className="w-full min-w-0 flex-1 space-y-1">
-                      {programMix.map((entry) => {
-                        const total = events.length || 1;
-                        const pct = Math.round((entry.value / total) * 100);
-
-                        return (
-                          <li key={entry.name}>
-                            <button
-                              type="button"
-                              onClick={() => handleTypeSelect(entry.name)}
-                              title={`View ${entry.name} events`}
-                              className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-raised/45"
-                            >
-                              <span
-                                className="h-2.5 w-2.5 shrink-0 rounded-full"
-                                style={{ background: entry.shade }}
-                              />
-
-                              <span className="w-24 shrink-0 truncate text-sm font-medium text-ink">
-                                {entry.name}
-                              </span>
-
-                              <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-raised">
-                                <span
-                                  className="block h-full rounded-full transition-[width] duration-300"
-                                  style={{ width: `${pct}%`, background: entry.shade }}
-                                />
-                              </span>
-
-                              <span className="num shrink-0 text-right text-sm font-semibold text-ink">
-                                {entry.value}
-                              </span>
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </section>
-          </>
-        )}
-
-        {/* ============================================== REVIEW QUEUE === */}
-        {activeView === "submissions" && (
-          <section className="glass reveal mt-6 overflow-hidden rounded-xl border border-line/60 bg-surface shadow-xs">
-            {/* Card Header */}
-            <div className="flex items-center justify-between border-b border-line/60 px-5 py-4 sm:px-6">
-              <div className="flex items-center gap-3">
-                <span className="icon-tile h-9 w-9 rounded-xl">
-                  <IconClock className="h-4 w-4 text-accent" />
-                </span>
-                <div>
-                  <h2 className="font-display text-base font-semibold text-ink">
-                    Review Queue
-                  </h2>
-                  <p className="prose-muted text-xs">
-                    Submissions awaiting Dean approval, sorted oldest first
+              ) : activityTotals.total === 0 ? (
+                <div className="flex h-40 flex-col items-center justify-center text-center">
+                  <p className="h3 text-base text-ink">No events in these months</p>
+                  <p className="prose-muted mt-1 text-xs">
+                    Events dated in the last eight months or the next three appear here.
                   </p>
                 </div>
-              </div>
+              ) : (
+                <>
+                  {/* The table below carries the same numbers for screen
+                      readers, so the drawing itself is hidden from them. */}
+                  <div className="h-40 w-full" aria-hidden="true">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={activity}
+                        margin={{ top: 6, right: 10, bottom: 0, left: -22 }}
+                        barCategoryGap="26%"
+                        onClick={(state) => openMonth(state?.activeLabel)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <CartesianGrid vertical={false} stroke={`rgb(${tokens.muted} / .14)`} />
+                        <XAxis
+                          dataKey="key"
+                          tickFormatter={monthTick}
+                          tickLine={false}
+                          axisLine={false}
+                          tick={{ fill: `rgb(${tokens.muted})`, fontSize: 11 }}
+                          tickMargin={6}
+                          minTickGap={10}
+                        />
+                        <YAxis
+                          allowDecimals={false}
+                          tickLine={false}
+                          axisLine={false}
+                          tick={{ fill: `rgb(${tokens.muted})`, fontSize: 11 }}
+                        />
+                        <Tooltip
+                          cursor={{ fill: `rgb(${tokens.muted} / .08)`, radius: 6 }}
+                          content={<MonthTooltip />}
+                          isAnimationActive={false}
+                        />
+                        {ACTIVITY_SERIES.map((item) => (
+                          <Bar
+                            key={item.key}
+                            dataKey={item.key}
+                            name={item.label}
+                            stackId="month"
+                            fill={item.color}
+                            isAnimationActive={false}
+                            shape={(props) => <StackSegment {...props} series={item.key} />}
+                          />
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
 
-              <span className="chip chip-solid text-xs">
-                {reviewQueueEvents.length} {reviewQueueEvents.length === 1 ? "event" : "events"}
-              </span>
-            </div>
+                  <table className="sr-only">
+                    <caption>Events per month, by review outcome</caption>
+                    <thead>
+                      <tr>
+                        <th scope="col">Month</th>
+                        {ACTIVITY_SERIES.map((item) => (
+                          <th key={item.key} scope="col">{item.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activity.map((month) => (
+                        <tr key={month.key}>
+                          <th scope="row">{monthName(month.key)}</th>
+                          {ACTIVITY_SERIES.map((item) => (
+                            <td key={item.key}>{month[item.key]}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
 
-            {/* Card Body */}
-            {loadingEvents ? (
-              <div className="flex h-48 flex-col items-center justify-center gap-3">
-                <span className="spin h-8 w-8 text-accent" />
-                <p className="prose-muted text-sm">Loading review queue…</p>
-              </div>
-            ) : reviewQueueEvents.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-                <span className="icon-tile mb-4 h-12 w-12 rounded-2xl">
-                  <IconInbox className="h-6 w-6 text-muted" />
-                </span>
-                <p className="font-display text-base font-semibold text-ink">
-                  Nothing needs your attention right now.
-                </p>
-                <p className="prose-muted mt-1 text-xs sm:text-sm max-w-sm">
-                  All submitted events have been reviewed. New submissions from teachers will appear here.
-                </p>
-                <Link
-                  to="/dean/events"
-                  className="btn btn-ghost btn-sm mt-5 inline-flex items-center gap-1.5"
-                >
-                  <span>View all events</span>
-                  <IconArrowRight className="h-3.5 w-3.5" />
-                </Link>
-              </div>
-            ) : (
-              <>
-                <div className="divide-y divide-line/30">
-                  {reviewQueueEvents.map((event) => (
-                    <div
-                      key={event.id}
-                      className="flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-6 transition-colors hover:bg-raised/20"
+              {programMix.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t hairline pt-2.5">
+                  <span className="mr-1 text-xs font-medium text-muted">By type</span>
+                  {programMix.map((entry) => (
+                    <button
+                      key={entry.name}
+                      type="button"
+                      onClick={() => handleTypeSelect(entry.name)}
+                      title={`View ${entry.name} events`}
+                      className="chip chip-sm cursor-pointer gap-1.5 transition hover:border-accent/40 hover:text-ink"
                     >
-                      {/* Left: Date + Event title + Subtitle */}
-                      <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
-                        <span className="whitespace-nowrap font-bold text-xs sm:text-sm text-ink">
-                          {formatRowDate(event.event_date || event.start_date || event.created_at)}
-                        </span>
-
-                        <div className="flex min-w-0 items-center gap-2">
-                          <Link
-                            to={`/dean/events/${event.id}`}
-                            className="truncate font-semibold text-sm text-ink hover:text-accent"
-                            title={event.event_name}
-                          >
-                            {event.event_name || "Untitled Event"}
-                          </Link>
-
-                          <span className="hidden truncate text-xs text-muted md:inline">
-                            · {event.event_type || "Event"}
-                            {event.department ? ` · ${event.department}` : ""}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Middle: Status chip */}
-                      <div className="shrink-0">
-                        <StatusChip status={event.status} size="sm" />
-                      </div>
-
-                      {/* Right: Actions */}
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Link
-                          to={`/dean/events/${event.id}`}
-                          className="btn btn-ghost btn-xs border border-line/80 font-medium text-ink hover:bg-raised/60 inline-flex items-center gap-1.5"
-                          title="View submission details"
-                        >
-                          <IconEye className="h-3.5 w-3.5 text-muted" />
-                          <span>View</span>
-                        </Link>
-
-                        {canApprove(event) && (
-                          <button
-                            type="button"
-                            onClick={() => openDecision(event, "approve")}
-                            disabled={processingId === event.id}
-                            title={getApproveLabel(event)}
-                            className="btn btn-ok btn-xs inline-flex items-center gap-1"
-                          >
-                            {processingId === event.id ? (
-                              <span className="spin h-3.5 w-3.5" />
-                            ) : (
-                              <IconCheck className="h-3.5 w-3.5" />
-                            )}
-                            <span>{getApproveLabel(event)}</span>
-                          </button>
-                        )}
-
-                        {canReject(event) && (
-                          <button
-                            type="button"
-                            onClick={() => openDecision(event, "reject")}
-                            disabled={processingId === event.id}
-                            title="Reject this event"
-                            className="btn btn-danger btn-xs inline-flex items-center gap-1"
-                          >
-                            {processingId === event.id ? (
-                              <span className="spin h-3.5 w-3.5" />
-                            ) : (
-                              <IconX className="h-3.5 w-3.5" />
-                            )}
-                            <span>Reject</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
+                      {entry.name}
+                      <span className="num font-semibold text-ink">{entry.value}</span>
+                    </button>
                   ))}
                 </div>
-
-                {/* Footer */}
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-t border-line/60 bg-raised/20 px-5 py-3.5 text-xs text-muted sm:px-6">
-                  <span>
-                    Showing {reviewQueueEvents.length} event{reviewQueueEvents.length === 1 ? "" : "s"} awaiting review.
-                  </span>
-                  <Link
-                    to="/dean/events"
-                    className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
-                  >
-                    <span>View all events</span>
-                    <IconArrowRight className="h-3.5 w-3.5" />
-                  </Link>
-                </div>
-              </>
-            )}
+              )}
+            </div>
           </section>
-        )}
+
+          {/* ---- Upcoming events ---- */}
+          <section className="glass reveal overflow-hidden lg:col-span-12" style={{ "--i": 7 }}>
+            <div className="flex items-center justify-between gap-3 border-b hairline px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <IconCalendar className="h-4 w-4 text-accent" />
+                <h2 className="h3 text-base text-ink">Upcoming events</h2>
+                <span className="text-xs text-muted">next 30 days</span>
+              </div>
+              {upcoming.total > 0 && (
+                <Link
+                  to={`/dean/events?status=approved&start_date=${today}&end_date=${upcoming.until}`}
+                  className="btn btn-ghost btn-xs"
+                >
+                  View all {upcoming.total}
+                  <IconArrowRight />
+                </Link>
+              )}
+            </div>
+
+            <div className="p-3">
+              {loadingEvents ? (
+                <div className="flex h-20 items-center justify-center">
+                  <span className="spin h-8 w-8 text-accent" />
+                </div>
+              ) : upcoming.items.length === 0 ? (
+                <p className="prose-muted px-1 py-4 text-center text-sm">Nothing scheduled in the next 30 days.</p>
+              ) : (
+                <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {upcoming.items.slice(0, UPCOMING_PREVIEW).map((event) => {
+                    const time = formatTime12h(event.start_time);
+                    const meta = [time, event.location].filter(Boolean).join(" · ");
+                    return (
+                      <li key={event.id} className="min-w-0">
+                        <Link
+                          to={`/dean/events/${event.id}`}
+                          className="flex items-center gap-3 rounded-xl border hairline bg-raised/30 p-2 transition hover:border-accent/30 hover:bg-raised/60"
+                        >
+                          <DateBlock date={event.event_date} />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold text-ink" title={event.event_name}>
+                              {event.event_name || "Untitled event"}
+                            </p>
+                            <p className="truncate text-xs text-muted" title={meta}>
+                              {meta || "Time and venue not set"}
+                            </p>
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </section>
+
+        </div>
       </div>
 
-      {/* ==================================================================
-          DECISION MODAL (Approve / Reject)
-      ================================================================== */}
-      <Modal
-        open={Boolean(decision)}
-        onClose={closeDecision}
-        eyebrow="Confirm"
-        title={
-          decision?.kind === "approve"
-            ? "Do you want to approve?"
-            : "Reject event"
-        }
-        subtitle={
-          decision?.kind === "approve"
-            ? "The teacher is notified of the decision."
-            : "The teacher sees the reason you give."
-        }
-        footer={
-          <>
-            <button
-              type="button"
-              onClick={closeDecision}
-              disabled={Boolean(processingId)}
-              className="btn btn-ghost btn-sm"
-            >
-              Cancel
-            </button>
-
-            {decision?.kind === "approve" && (
-              <button
-                type="button"
-                onClick={() =>
-                  navigate(`/dean/events/${decisionEvent?.id}?action=approve`)
-                }
-                disabled={Boolean(processingId)}
-                className="btn btn-ghost btn-sm"
-              >
-                Open event and approve
-              </button>
-            )}
-
-            {decision?.kind === "approve" ? (
-              <button
-                type="button"
-                onClick={confirmApprove}
-                disabled={Boolean(processingId)}
-                className="btn btn-ok btn-sm"
-              >
-                {processingId ? <span className="spin h-3.5 w-3.5" /> : <IconCheck />}
-                {processingId ? "Approving…" : "Approve"}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={confirmReject}
-                disabled={Boolean(processingId)}
-                className="btn btn-danger btn-sm"
-              >
-                {processingId ? <span className="spin h-3.5 w-3.5" /> : <IconX />}
-                {processingId ? "Rejecting…" : "Reject"}
-              </button>
-            )}
-          </>
-        }
-      >
-        <div className="flex items-start gap-3">
-          <span
-            className="icon-tile icon-tile-track"
-            style={{
-              "--track":
-                decision?.kind === "approve" ? trackOf("approved") : trackOf("rejected"),
-            }}
-          >
-            {decision?.kind === "approve" ? <IconCheckCircle /> : <IconAlertTriangle />}
-          </span>
-
-          <div className="min-w-0">
-            <p className="font-display text-sm font-semibold text-ink">
-              {decisionEvent?.event_name || "Untitled Event"}
-            </p>
-            <p className="prose-muted mt-1 text-xs">
-              {[
-                decisionEvent?.event_type,
-                formatRowDate(decisionEvent?.event_date || decisionEvent?.created_at),
-                decisionEvent?.location,
-              ]
-                .filter(Boolean)
-                .join(" · ") || "No details recorded"}
-            </p>
-          </div>
-        </div>
-
-        {decision?.kind === "reject" && (
-          <div className="field mt-5">
-            <label htmlFor="rejectReason">
-              Reason for rejection
-              <span className="req">*</span>
-            </label>
-
-            <textarea
-              id="rejectReason"
-              value={rejectReason}
-              onChange={(e) => {
-                setRejectReason(e.target.value);
-                if (reasonError) setReasonError("");
-              }}
-              rows={4}
-              autoFocus
-              placeholder="What needs to change before this can be approved?"
-              aria-invalid={reasonError ? "true" : undefined}
-              aria-describedby={reasonError ? "rejectReasonError" : undefined}
-              className="input"
-            />
-
-            {reasonError && (
-              <p id="rejectReasonError" className="error mt-1 text-xs text-err" role="alert">
-                {reasonError}
-              </p>
-            )}
-          </div>
-        )}
-      </Modal>
     </DeanShell>
   );
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiJson } from "../services/api";
+import { checkResearchReminders } from "../services/research";
 import { useOriginState } from "../hooks/useOriginState";
 import {
   clearAllNotifications,
@@ -17,6 +18,7 @@ import {
   IconActivity,
   IconAlertTriangle,
   IconArrowRight,
+  IconAward,
   IconBell,
   IconCheck,
   IconCheckCircle,
@@ -47,14 +49,26 @@ const TYPE_META = {
   reminder: { Icon: IconClock, track: "#0EA5E9", label: "Reminders" },
   submitted: { Icon: IconInbox, track: trackOf("pending"), label: "New" },
   resubmitted: { Icon: IconRefresh, track: trackOf("under_review"), label: "Resubmitted" },
+  // Research portfolio (routers/research.py)
+  research_verified: { Icon: IconCheckCircle, track: trackOf("approved"), label: "Verified" },
+  research_changes: { Icon: IconAlertTriangle, track: trackOf("under_review"), label: "Research changes" },
+  research_unverified: { Icon: IconAlertTriangle, track: trackOf("revoked"), label: "Unverified" },
+  research_rejected: { Icon: IconXCircle, track: trackOf("rejected"), label: "Research rejected" },
+  research_added: { Icon: IconAward, track: trackOf("published"), label: "Research added" },
+  research_flagged: { Icon: IconAlertTriangle, track: trackOf("pending"), label: "Correction" },
+  research_removed: { Icon: IconTrash, track: trackOf("rejected"), label: "Research removed" },
+  research_submitted: { Icon: IconAward, track: trackOf("pending"), label: "Research" },
+  research_reminder: { Icon: IconClock, track: trackOf("pending"), label: "Research due" },
+  research_showcase: { Icon: IconLayers, track: trackOf("published"), label: "Showcase" },
+  research: { Icon: IconAward, track: trackOf("published"), label: "Research" },
 };
 
 const FALLBACK_META = { Icon: IconBell, track: "#64748B", label: "Other" };
 
 /** The filter tabs each role gets — only the kinds that role can receive. */
 const FILTERS = {
-  teacher: ["all", "approved", "rejected", "revoked", "needs_changes", "progress", "reminder"],
-  dean: ["all", "submitted", "resubmitted"],
+  teacher: ["all", "approved", "rejected", "revoked", "needs_changes", "progress", "reminder", "research"],
+  dean: ["all", "submitted", "resubmitted", "research_submitted"],
   superadmin: ["all", "submitted", "approved", "rejected"],
 };
 
@@ -74,6 +88,16 @@ const TOAST_MS = 6_000;
  */
 const REMINDER_RECHECK_MS = 10 * 60 * 1000;
 const lastReminderCheck = new Map(); // userId -> timestamp
+const lastResearchCheck = new Map(); // userId -> timestamp, research outcomes due
+
+/**
+ * The last feed fetched, kept across bells for the same reason: a click in the
+ * sidebar mounts a new bell, which would otherwise ask the server again at once.
+ * A list younger than the poll interval is shown as-is and the next poll is due
+ * when it would have been. `knownIds` travels with it, so a notification that
+ * lands during a navigation still raises its toast.
+ */
+let lastFeed = null; // { userId, at, list, knownIds }
 
 /**
  * The notification bell, for every role that has one.
@@ -97,7 +121,9 @@ export default function NotificationBell({ currentUser, onNew }) {
     onNewRef.current = onNew;
   }, [onNew]);
 
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotifications] = useState(() =>
+    lastFeed && lastFeed.userId === currentUser?.id ? lastFeed.list : []
+  );
   const [open, setOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
@@ -111,7 +137,24 @@ export default function NotificationBell({ currentUser, onNew }) {
   const userId = currentUser?.id;
   const role = currentUser?.role === "dean" ? "dean" : "teacher";
 
+  // Every change to the list goes through here, so the shared copy the next
+  // bell starts from never shows a notification this one already removed.
+  const setFeed = useCallback(
+    (update) =>
+      setNotifications((prev) => {
+        const next = typeof update === "function" ? update(prev) : update;
+        if (lastFeed?.userId === userId) lastFeed.list = next;
+        return next;
+      }),
+    [userId]
+  );
+
   const eventPath = (id) => (role === "dean" ? `/dean/events/${id}` : `/teacher/events/${id}`);
+
+  // A research notification names a record, opened in the reader's own panel.
+  const RESEARCH_BASE = { dean: "/dean", event_manager: "/event_manager", teacher: "/teacher" };
+  const researchPath = (id) => `${RESEARCH_BASE[currentUser?.role] || "/teacher"}/research/${id}`;
+  const researchIdOf = (notif) => notif.data?.research_id;
 
   /* ---- Fetch, and spot what is new since the last look ---- */
   const loadNotifications = useCallback(async () => {
@@ -119,7 +162,6 @@ export default function NotificationBell({ currentUser, onNew }) {
     try {
       setLoading(true);
       const list = await fetchNotifications(userId);
-      setNotifications(list);
 
       if (knownIds.current === null) {
         // First load: everything already there is history, not news.
@@ -134,6 +176,8 @@ export default function NotificationBell({ currentUser, onNew }) {
         }
       }
 
+      lastFeed = { userId, at: Date.now(), list, knownIds: knownIds.current };
+      setFeed(list);
       return list;
     } catch (err) {
       console.warn("NotificationBell: fetch error", err);
@@ -141,22 +185,28 @@ export default function NotificationBell({ currentUser, onNew }) {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, setFeed]);
 
   // Poll only while the tab is visible; a hidden tab (possibly one of many)
   // stops, and catches up immediately when it is shown again.
   useEffect(() => {
-    knownIds.current = null;
+    let timer = null;
     let interval = null;
 
-    const start = () => {
-      if (interval === null) interval = setInterval(loadNotifications, POLL_INTERVAL_MS);
+    // The first poll after `delay`, then one every interval.
+    const start = (delay = POLL_INTERVAL_MS) => {
+      if (timer !== null || interval !== null) return;
+      timer = setTimeout(() => {
+        timer = null;
+        loadNotifications();
+        interval = setInterval(loadNotifications, POLL_INTERVAL_MS);
+      }, delay);
     };
     const stop = () => {
-      if (interval !== null) {
-        clearInterval(interval);
-        interval = null;
-      }
+      clearTimeout(timer);
+      clearInterval(interval);
+      timer = null;
+      interval = null;
     };
     const onVisibility = () => {
       if (document.hidden) {
@@ -167,14 +217,46 @@ export default function NotificationBell({ currentUser, onNew }) {
       }
     };
 
-    loadNotifications();
-    if (!document.hidden) start();
+    const cached = userId && lastFeed?.userId === userId ? lastFeed : null;
+    const age = cached ? Date.now() - cached.at : Infinity;
+    knownIds.current = cached ? cached.knownIds : null;
+    if (age < POLL_INTERVAL_MS) {
+      // Fetched moments ago by the bell on the previous page.
+      setFeed(cached.list);
+      if (!document.hidden) start(POLL_INTERVAL_MS - age);
+    } else {
+      loadNotifications();
+      if (!document.hidden) start();
+    }
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       stop();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [loadNotifications]);
+  }, [loadNotifications, setFeed, userId]);
+
+  /* ---- Research outcomes due (patents to update ...), once per visit ----
+     The server decides what is due and never repeats itself, so this only
+     has to ask now and then. */
+  const researchRole = currentUser?.role;
+  useEffect(() => {
+    if (!userId || (researchRole !== "teacher" && researchRole !== "event_manager")) return undefined;
+    if (Date.now() - (lastResearchCheck.get(userId) || 0) < REMINDER_RECHECK_MS) return undefined;
+    let cancelled = false;
+    lastResearchCheck.set(userId, Date.now());
+    checkResearchReminders()
+      .then(async (body) => {
+        if (cancelled || !body?.created) return;
+        const list = await fetchNotifications(userId);
+        if (cancelled) return;
+        list.forEach((n) => knownIds.current?.add(n.id));
+        setFeed(list);
+      })
+      .catch((err) => console.warn("Research reminder check skipped:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, researchRole]);
 
   /* ---- Teachers: event-day reminders, once per visit ---- */
   useEffect(() => {
@@ -198,7 +280,7 @@ export default function NotificationBell({ currentUser, onNew }) {
           // Reminders are generated on this device; they are not "news" to toast.
           const list = await fetchNotifications(userId);
           list.forEach((n) => knownIds.current?.add(n.id));
-          setNotifications(list);
+          setFeed(list);
         }
       } catch (err) {
         console.warn("Reminder check skipped:", err);
@@ -237,14 +319,14 @@ export default function NotificationBell({ currentUser, onNew }) {
   /* ---- Actions ---- */
   const markRead = async (notif) => {
     if (notif.is_read) return;
-    setNotifications((prev) =>
+    setFeed((prev) =>
       prev.map((n) => (n.id === notif.id ? { ...n, is_read: true, read_at: new Date().toISOString() } : n))
     );
     await markNotificationAsRead(userId, notif.id);
   };
 
   const markAllRead = async () => {
-    setNotifications((prev) =>
+    setFeed((prev) =>
       prev.map((n) => ({ ...n, is_read: true, read_at: n.read_at || new Date().toISOString() }))
     );
     await markAllNotificationsAsRead(userId);
@@ -252,7 +334,7 @@ export default function NotificationBell({ currentUser, onNew }) {
 
   const deleteItem = async (notifId) => {
     if (!notifId) return;
-    setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+    setFeed((prev) => prev.filter((n) => n.id !== notifId));
     setToasts((prev) => prev.filter((t) => t.id !== notifId));
     await deleteNotification(userId, notifId);
   };
@@ -269,7 +351,7 @@ export default function NotificationBell({ currentUser, onNew }) {
     }
     setClearing(true);
     try {
-      setNotifications([]);
+      setFeed([]);
       setToasts([]);
       await clearAllNotifications(userId);
     } catch (err) {
@@ -287,6 +369,16 @@ export default function NotificationBell({ currentUser, onNew }) {
     setHistoryOpen(false);
     setToasts((prev) => prev.filter((t) => t.id !== notif.id));
 
+    const researchId = researchIdOf(notif);
+    if (researchId) {
+      navigate(researchPath(researchId));
+      return;
+    }
+    const base = RESEARCH_BASE[currentUser?.role] || "/teacher";
+    if (notif.data?.research_list) {
+      navigate(`${base}/research`);
+      return;
+    }
     const eventId = notif.event_id || notif.data?.event_id;
     if (eventId) navigate(eventPath(eventId));
   };
@@ -300,7 +392,14 @@ export default function NotificationBell({ currentUser, onNew }) {
   };
 
   const filteredHistory = notifications.filter((n) => {
-    if (historyFilter !== "all" && n.notification_type !== historyFilter) return false;
+    if (
+      historyFilter !== "all" &&
+      (historyFilter === "research"
+        ? !n.notification_type?.startsWith("research_")
+        : n.notification_type !== historyFilter)
+    ) {
+      return false;
+    }
     const q = historySearch.trim().toLowerCase();
     if (!q) return true;
     return [n.title, n.message, n.data?.event_name].some((field) =>
@@ -382,6 +481,15 @@ export default function NotificationBell({ currentUser, onNew }) {
             >
               {notif.message}
             </p>
+
+            {(researchIdOf(notif) || notif.data?.research_list) && (
+              <div className={`flex flex-wrap gap-1.5 ${compact ? "mt-2" : "mt-3"}`}>
+                <span className="btn btn-ghost btn-xs text-ink inline-flex items-center gap-1">
+                  {notif.data?.research_list ? "View research" : "View record"}
+                  <IconArrowRight className="h-3 w-3" />
+                </span>
+              </div>
+            )}
 
             {notif.event_id && (
               <div className={`flex flex-wrap gap-1.5 ${compact ? "mt-2" : "mt-3"}`}>
@@ -567,7 +675,11 @@ export default function NotificationBell({ currentUser, onNew }) {
             const count =
               key === "all"
                 ? notifications.length
-                : notifications.filter((n) => n.notification_type === key).length;
+                : notifications.filter((n) =>
+                    key === "research"
+                      ? n.notification_type?.startsWith("research_")
+                      : n.notification_type === key
+                  ).length;
             return (
               <button
                 key={key}
@@ -689,13 +801,13 @@ export default function NotificationBell({ currentUser, onNew }) {
                 <div className="min-w-0 flex-1">
                   <p className="font-display text-sm font-semibold text-ink">{notif.title}</p>
                   <p className="mt-0.5 line-clamp-2 text-sm text-muted">{notif.message}</p>
-                  {notif.event_id && (
+                  {(notif.event_id || researchIdOf(notif) || notif.data?.research_list) && (
                     <button
                       type="button"
                       onClick={() => openNotification(notif)}
                       className="link mt-1.5 font-display text-xs font-semibold"
                     >
-                      View event →
+                      {notif.event_id ? "View event →" : "View →"}
                     </button>
                   )}
                 </div>

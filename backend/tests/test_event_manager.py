@@ -299,6 +299,57 @@ class RoleTests(EventManagerTestCase):
 # EVENTS: the teacher flow, recorded instead of pending
 # ============================================================
 
+class ArchivedByDeanTests(EventManagerTestCase):
+    """An event the Dean archived stayed editable, deletable and reportable
+    for the Event Manager, with nothing saying it was on the shelf."""
+
+    def archive(self, event_id):
+        from app.utils.serializers import utc_now
+
+        self.events.docs[ObjectId(event_id)]["archived_at"] = utc_now()
+
+    def test_an_archived_event_is_read_only(self) -> None:
+        event = self.recorded()
+        self.archive(event["id"])
+
+        shown = self.call("GET", f"/event-manager/events/{event['id']}").json()["event"]
+        self.assertIsNotNone(shown["archived_at"])  # the screens can say so
+        listed = self.call("GET", "/event-manager/events").json()["events"]
+        self.assertIsNotNone(listed[0]["archived_at"])
+
+        media_id = self.media.find({"event_id": event["id"]})[0]["_id"]
+        refused = {
+            "edit": self.save(event["id"], event_name="Changed"),
+            "photo": self.photo(event["id"], name="b.png"),
+            "document": self.document(event["id"], name="b.pdf"),
+            "remove photo": self.call("DELETE", f"/event-manager/events/{event['id']}/media/{media_id}"),
+            "report photos": self.call("PUT", f"/event-manager/events/{event['id']}/report-photos", json={"photo_ids": []}),
+            "report": self.call("GET", f"/event-manager/events/{event['id']}/report"),
+            "delete": self.call("DELETE", f"/event-manager/events/{event['id']}"),
+        }
+        for action, response in refused.items():
+            with self.subTest(action=action):
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertIn("archive", response.json()["detail"])
+        self.assertEqual(self.events.find_one({"_id": ObjectId(event["id"])})["event_name"], EVENT["event_name"])
+
+    def test_bulk_delete_and_reports_leave_archived_events_alone(self) -> None:
+        kept = self.recorded(event_name="Shelved Workshop")
+        gone = self.recorded(event_name="Open Workshop")
+        self.archive(kept["id"])
+
+        report = self.call("POST", "/event-manager/reports", json={"event_ids": [kept["id"], gone["id"]]})
+        self.assertEqual(report.status_code, 409)
+        self.assertIn("Shelved Workshop", report.json()["detail"])
+
+        body = self.call("POST", "/event-manager/events/bulk-delete", json={"event_ids": [kept["id"], gone["id"]]}).json()
+        by_id = {r["event_id"]: r for r in body["results"]}
+        self.assertEqual(by_id[kept["id"]]["status"], "skipped")
+        self.assertEqual(by_id[gone["id"]]["status"], "deleted")
+        self.assertEqual((body["deleted_count"], body["skipped_count"], body["not_found_count"]), (1, 1, 0))
+        self.assertIsNotNone(self.events.find_one({"_id": ObjectId(kept["id"])}))
+
+
 class EventFlowTests(EventManagerTestCase):
     def test_create_is_a_draft_like_the_teacher_wizard(self) -> None:
         refused = self.call("POST", "/event-manager/events", json=EVENT)

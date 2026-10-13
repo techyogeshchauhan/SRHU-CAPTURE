@@ -15,7 +15,22 @@ import {
  *
  * Allows Dean and Event Manager to customize what information is included in
  * the final PDF report before generating and downloading it.
+ *
+ * Unavailable details and attachment groups are shown disabled and unticked,
+ * and are never sent as selected. The photo option is omitted when there are
+ * no photos. A count or flag left as null means "not known" (a consolidated
+ * report over several events), and leaves the section available.
  */
+const ALL_SECTIONS = {
+  include_basic_details: true,
+  include_schedule_venue: true,
+  include_description: true,
+  include_other_info: true,
+  include_photos: true,
+  include_notices: true,
+  include_reports: true,
+};
+
 export default function ReportCustomizationModal({
   open,
   onClose,
@@ -26,33 +41,28 @@ export default function ReportCustomizationModal({
   documentCount = null,
   noticeCount = null,
   attachmentCount = null,
+  hasDescription = null,
+  hasOtherInfo = null,
   isConsolidated = false,
   eventCount = 1,
 }) {
-  const [options, setOptions] = useState({
-    include_basic_details: true,
-    include_schedule_venue: true,
-    include_description: true,
-    include_other_info: true,
-    include_photos: true,
-    include_notices: true,
-    include_reports: true,
-  });
+  const [options, setOptions] = useState(ALL_SECTIONS);
+
+  // Every opening starts from all sections: a choice made for one event's
+  // report must not silently carry over to the next event's. Reset while
+  // rendering, on the open transition, rather than in an effect.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setOptions(ALL_SECTIONS);
+  }
 
   const toggleOption = (key) => {
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const handleSelectAll = () => {
-    setOptions({
-      include_basic_details: true,
-      include_schedule_venue: true,
-      include_description: true,
-      include_other_info: true,
-      include_photos: true,
-      include_notices: true,
-      include_reports: true,
-    });
+    setOptions(ALL_SECTIONS);
   };
 
   const handleDeselectAll = () => {
@@ -67,14 +77,29 @@ export default function ReportCustomizationModal({
     });
   };
 
-  const selectedCount = Object.values(options).filter(Boolean).length;
+  // Sections with nothing to put on the page for this event.
+  const unavailable = {
+    include_description: hasDescription === false,
+    include_other_info: hasOtherInfo === false,
+    include_photos: photoCount === 0,
+    include_notices: noticeCount === 0,
+    include_reports: attachmentCount === 0,
+  };
+
+  // What is actually selected: an unavailable section never counts as ticked.
+  const effective = Object.fromEntries(
+    Object.entries(options).map(([key, value]) => [key, Boolean(value && !unavailable[key])]),
+  );
+
+  const availableCount = Object.keys(options).filter((key) => !unavailable[key]).length;
+  const selectedCount = Object.values(effective).filter(Boolean).length;
   const canGenerate = selectedCount > 0 && !generating;
 
   const handleConfirm = async () => {
     if (!canGenerate) return;
     const payload = {
-      ...options,
-      include_documents: Boolean(options.include_notices || options.include_reports),
+      ...effective,
+      include_documents: Boolean(effective.include_notices || effective.include_reports),
     };
     await onGenerate(payload);
   };
@@ -97,12 +122,14 @@ export default function ReportCustomizationModal({
       title: "Event Description & Objectives",
       description: "Full event description, objectives, and summary documentation.",
       Icon: IconFileText,
+      badge: hasDescription === false ? "Not added" : null,
     },
     {
       key: "include_other_info",
       title: "Participation & Social Links",
       description: "Expected participant count and published social media links.",
       Icon: IconUsers,
+      badge: hasOtherInfo === false ? "Not added" : null,
     },
     {
       key: "include_photos",
@@ -171,13 +198,13 @@ export default function ReportCustomizationModal({
         {/* Presets and quick count */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-b hairline pb-3">
           <p className="text-xs font-medium text-ink">
-            <span className="text-accent font-semibold">{selectedCount}</span> of {sections.length} sections selected
+            <span className="text-accent font-semibold">{selectedCount}</span> of {availableCount} sections selected
           </p>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleSelectAll}
-              disabled={generating || selectedCount === sections.length}
+              disabled={generating || selectedCount === availableCount}
               className="text-xs text-accent hover:underline disabled:opacity-40 disabled:no-underline font-medium"
             >
               Select All
@@ -196,54 +223,60 @@ export default function ReportCustomizationModal({
 
         {/* Section Cards */}
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-          {sections.map(({ key, title, description, Icon, badge }) => {
-            const checked = options[key];
-            return (
-              <label
-                key={key}
-                className={`relative flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors select-none ${
-                  checked
-                    ? "border-accent/40 bg-accent/[0.04] shadow-xs"
-                    : "border-line/60 bg-surface/30 opacity-70 hover:opacity-100 hover:border-line"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggleOption(key)}
-                  disabled={generating}
-                  className="mt-0.5 h-4 w-4 rounded border-line text-accent focus:ring-accent"
-                />
+          {sections
+            .filter(({ key }) => !(key === "include_photos" && photoCount === 0))
+            .map(({ key, title, description, Icon, badge }) => {
+              const checked = effective[key];
+              const disabled = unavailable[key];
+              return (
+                <label
+                  key={key}
+                  title={disabled ? "Nothing to include: this was not added to the event." : undefined}
+                  className={`relative flex items-start gap-3 rounded-xl border p-3.5 transition-colors select-none ${
+                    disabled
+                      ? "cursor-not-allowed border-line/40 bg-surface/30 opacity-45"
+                      : checked
+                      ? "cursor-pointer border-accent/40 bg-accent/[0.04] shadow-xs"
+                      : "cursor-pointer border-line/60 bg-surface/30 opacity-70 hover:opacity-100 hover:border-line"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleOption(key)}
+                    disabled={generating || disabled}
+                    className="mt-0.5 h-4 w-4 rounded border-line text-accent focus:ring-accent"
+                  />
 
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex h-6 w-6 items-center justify-center rounded-lg ${
-                        checked ? "bg-accent/15 text-accent" : "bg-surface text-muted"
-                      }`}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                    </span>
-                    <span className="text-xs font-semibold text-ink line-clamp-1">
-                      {title}
-                    </span>
-                  </div>
-
-                  <p className="prose-muted mt-1 text-[11px] leading-relaxed">
-                    {description}
-                  </p>
-
-                  {badge && (
-                    <div className="mt-2">
-                      <span className="inline-block rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted border hairline">
-                        {badge}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded-lg ${
+                          checked ? "bg-accent/15 text-accent" : "bg-surface text-muted"
+                        }`}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="text-xs font-semibold text-ink line-clamp-1">
+                        {title}
                       </span>
                     </div>
-                  )}
-                </div>
-              </label>
+
+                    <p className="prose-muted mt-1 text-[11px] leading-relaxed">
+                      {description}
+                    </p>
+
+                    {badge && (
+                      <div className="mt-2">
+                        <span className="inline-block rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted border hairline">
+                          {badge}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </label>
             );
-          })}
+            })}
         </div>
 
         {selectedCount === 0 && (

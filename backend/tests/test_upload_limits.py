@@ -158,10 +158,11 @@ class UploadLimitsApiTests(UploadLimitsTestCase):
 
         self.assertEqual(data["deployment_ceiling_mb"], settings.max_upload_size_mb)
         bounds = data["bounds"]
-        # Every numeric limit; the *_required switches are booleans with no range.
-        self.assertEqual(
-            set(bounds), set(DEFAULT_UPLOAD_LIMITS) - set(REQUIREMENT_FIELDS.values())
-        )
+        # Every numeric limit; the *_required switches -- the event upload
+        # kinds' and research evidence's -- are booleans with no range.
+        switches = {field for field, value in DEFAULT_UPLOAD_LIMITS.items() if isinstance(value, bool)}
+        self.assertTrue(set(REQUIREMENT_FIELDS.values()) <= switches)
+        self.assertEqual(set(bounds), set(DEFAULT_UPLOAD_LIMITS) - switches)
         self.assertEqual(bounds["max_photos_per_event"], {"min": 1, "max": 100, "unit": "count"})
 
 

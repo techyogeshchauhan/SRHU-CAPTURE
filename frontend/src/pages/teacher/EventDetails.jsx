@@ -6,6 +6,7 @@ import { fetchCurrentUser, signOut } from "../../services/auth";
 import { canTeacherEditEvent, getRefusalReason } from "../../utils/constants";
 import { formatDateRange, formatTime12h } from "../../utils/dates";
 import { readEventFields } from "../../utils/eventFields";
+import { availabilityFromFiles, reportModalProps } from "../../utils/reportAvailability";
 import { buildTimeline } from "../../utils/eventHistory";
 import {
   duplicateEventAsDraft,
@@ -26,6 +27,7 @@ import { isApprovedStatus, isRefusedStatus, trackOf } from "../../components/tea
 import {
   IconActivity,
   IconAlertTriangle,
+  IconArchive,
   IconArrowLeft,
   IconBuilding,
   IconCheckCircle,
@@ -77,6 +79,9 @@ function EventDetails() {
   const { eventId } = useParams();
   const navigate = useNavigate();
   const panel = usePanel();
+  // Typography and spacing follow the Dean's event page for the Event
+  // Manager; the teacher's page is left as it was.
+  const manager = panel.role === "event_manager";
   const [reporting, setReporting] = useState(false);
   // Report problems are shown in place; `error` is the page's load failure.
   const [reportError, setReportError] = useState("");
@@ -304,7 +309,7 @@ function EventDetails() {
           : "Event details, uploaded files, and the photos that go into its report."
       }
     >
-      <div className="mx-auto w-full max-w-wrap px-5 py-8 sm:px-8">
+      <div className={`mx-auto w-full max-w-wrap px-5 sm:px-8 ${manager ? "py-6" : "py-8"}`}>
 
         {actionNotice && (
           <div className="toast toast-ok mb-5" role="status">
@@ -320,9 +325,22 @@ function EventDetails() {
           </div>
         )}
 
+        {event.archived_at && (
+          <div className="glass mb-5 flex items-start gap-3 p-4" role="note">
+            <IconArchive className="mt-0.5 h-5 w-5 shrink-0 text-muted" />
+            <div className="min-w-0 text-sm text-ink">
+              <p className="font-semibold">Archived by the Dean</p>
+              <p className="prose-muted mt-0.5">
+                It can be viewed, but not edited, deleted or included in a report. Ask the Dean to restore it.
+                {event.archive_reason ? ` Reason: ${event.archive_reason}` : ""}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* ------------------------------------------------- back + actions */}
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <Link to={`${panel.base}/my-events`} className="btn btn-ghost btn-sm">
+        <div className={`flex flex-wrap items-center justify-between gap-3 ${manager ? "mb-4" : "mb-5"}`}>
+          <Link to={`${panel.base}/my-events`} className={`btn btn-ghost ${manager ? "btn-xs" : "btn-sm"}`}>
             <IconArrowLeft />
             Back to My Events
           </Link>
@@ -334,7 +352,7 @@ function EventDetails() {
                 Track Status
               </button>
             ) : (
-              panel.reports && event.status === "recorded" && (
+              panel.reports && event.status === "recorded" && !event.archived_at && (
                 <button
                   type="button"
                   onClick={handleDownloadReport}
@@ -395,12 +413,13 @@ function EventDetails() {
 
         {/* -------------------------------------------------------- the hero */}
         <PageHero
+          compact={manager}
           eyebrow={event.event_type}
           title={event.event_name}
           subtitle={`Organized by ${meta.organizer || profile?.name || panel.roleLabel}`}
-          actions={<StatusChip status={event.status} size="md" />}
+          actions={<StatusChip status={event.status} size="md" archived={Boolean(event.archived_at)} />}
         >
-          <dl className="grid gap-4 border-t hairline pt-5 sm:grid-cols-3">
+          <dl className={`grid gap-4 border-t hairline sm:grid-cols-3 ${manager ? "pt-4" : "pt-5"}`}>
             {facts.map((fact) => (
               <div key={fact.label} className="flex items-center gap-3">
                 <span className="icon-tile h-9 w-9 rounded-xl">
@@ -503,12 +522,16 @@ function EventDetails() {
           </section>
         )}
 
-        <RidgeDivider className="divider mt-6" />
+        {manager ? <div className="mt-4" /> : <RidgeDivider className="divider mt-6" />}
 
         {/* ---------------------------------------------- coordination info */}
         <section className="glass p-6">
-          <p className="eyebrow">Coordination</p>
-          <h2 className="h3 mt-1 border-b hairline pb-4 text-ink">Event Information</h2>
+          {!manager && <p className="eyebrow">Coordination</p>}
+          <h2
+            className={`h3 border-b hairline pb-4 text-ink ${manager ? "text-base" : "mt-1"}`}
+          >
+            Event Information
+          </h2>
 
           <dl className="mt-5 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {details.map((item) => (
@@ -547,10 +570,10 @@ function EventDetails() {
         </section>
 
         {/* ------------------------------------------------------ description */}
-        <section className="glass mt-6 overflow-hidden">
-          <div className="border-b hairline px-6 py-5">
-            <p className="eyebrow">Proposal</p>
-            <h2 className="h3 mt-1 text-ink">Event Description</h2>
+        <section className={`glass overflow-hidden ${manager ? "mt-4" : "mt-6"}`}>
+          <div className={`border-b hairline px-6 ${manager ? "py-4" : "py-5"}`}>
+            {!manager && <p className="eyebrow">Proposal</p>}
+            <h2 className={`h3 text-ink ${manager ? "text-base" : "mt-1"}`}>Event Description</h2>
           </div>
           <p className="prose-muted whitespace-pre-line px-6 py-5 text-sm">
             {cleanDescription || "No description provided."}
@@ -558,7 +581,7 @@ function EventDetails() {
         </section>
 
         {/* ------------------------------------------------------- the files */}
-        <div className="mt-6 grid gap-6 md:grid-cols-2">
+        <div className={`grid md:grid-cols-2 ${manager ? "mt-4 gap-4" : "mt-6 gap-6"}`}>
 
           <section className="glass overflow-hidden">
             <div className="flex items-center justify-between border-b hairline px-6 py-4">
@@ -619,12 +642,14 @@ function EventDetails() {
 
         {/* A teacher can change the Dean report's photos while the event is
             still editable; the Event Manager's events always are. */}
-        {(panel.reports || canTeacherEditEvent(event)) && (
+        {(panel.reports || canTeacherEditEvent(event)) &&
+          !event.archived_at &&
+          media.some((item) => String(item.media_type || "").toLowerCase() === "image") && (
           <ReportPhotoPicker
             key={(event.report_photo_ids || []).join(",")}
             eventId={event.id}
             api={panel.api}
-            photos={media.filter((item) => item.media_type === "image")}
+            photos={media.filter((item) => String(item.media_type || "").toLowerCase() === "image")}
             initial={event.report_photo_ids || []}
             onSaved={(ids) => {
               setEvent((current) => ({ ...current, report_photo_ids: ids }));
@@ -682,10 +707,15 @@ function EventDetails() {
         onGenerate={handleExecuteReport}
         generating={reporting}
         eventName={event?.event_name}
-        photoCount={media?.filter((m) => m.media_type === "image").length}
-        documentCount={documents?.length}
-        noticeCount={documents?.filter((d) => d.category !== "report").length}
-        attachmentCount={(documents?.filter((d) => d.category === "report").length || 0) + (media?.length || 0)}
+        {...reportModalProps(
+          availabilityFromFiles({
+            description: cleanDescription,
+            participants: meta.expectedParticipants,
+            socialUrl: event.social_network_url,
+            media,
+            documents,
+          }),
+        )}
       />
     </TeacherShell>
   );

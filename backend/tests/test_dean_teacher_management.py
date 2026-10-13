@@ -100,6 +100,34 @@ class Events:
         return _PagedCursor([d for d in self.documents if _matches(d, query or {})])
 
 
+class ResearchRecords:
+    """Just enough of research_records for the delete guard and list counts."""
+
+    def __init__(self) -> None:
+        self.documents: list[dict] = []
+
+    def add(self, teacher: dict, count: int = 1, *, entered_by: dict | None = None) -> None:
+        for _ in range(count):
+            self.documents.append({
+                "_id": ObjectId(),
+                "faculty_id": str(teacher["_id"]),
+                "created_by": str((entered_by or teacher)["_id"]),
+            })
+
+    def find(self, query: dict | None = None, *_args, **_kwargs):
+        return _PagedCursor([d for d in self.documents if _matches(d, query or {})])
+
+    def count_documents(self, query: dict | None = None) -> int:
+        return sum(1 for d in self.documents if _matches(d, query or {}))
+
+
+class Counted:
+    """An events-like collection that is always empty, for count_documents."""
+
+    def count_documents(self, _query=None) -> int:
+        return 0
+
+
 def _user(role: str, **fields) -> dict:
     doc = {
         "_id": ObjectId(),
@@ -147,6 +175,7 @@ class DeanTeacherTestCase(unittest.TestCase):
             self.users.delete_one({"_id": ObjectId(user_id)})
 
         self.events = Events()
+        self.research = ResearchRecords()
         self.sent_invites: list[tuple[str, str]] = []
         self.sent_resets: list[tuple[str, str]] = []
 
@@ -158,6 +187,10 @@ class DeanTeacherTestCase(unittest.TestCase):
             patch("app.services.audit_service.audit_logs", self.audit),
             patch("app.routers.dean_teachers.audit_logs", self.audit),
             patch("app.routers.dean_teachers.events", self.events),
+            patch("app.routers.dean_teachers.research_records", self.research),
+            patch("app.routers.superadmin.research_records", self.research),
+            patch("app.routers.superadmin.events", Counted()),
+            patch("app.routers.superadmin.managed_events", Counted()),
             patch("app.routers.dean_teachers.delete_user_cascade", side_effect=cascade),
             patch(
                 "app.routers.dean_teachers.delete_users_cascade",
@@ -466,6 +499,45 @@ class RemoveAndDeleteTests(DeanTeacherTestCase):
         self.assertEqual(log["action"], "user_deleted")
         self.assertEqual(log["actor_id"], str(self.dean["_id"]))
 
+    def test_research_records_keep_a_teacher_from_being_deleted(self) -> None:
+        """Deleting the account left their papers and patents behind as
+        "Unknown faculty member"."""
+        manager = _user("event_manager", name="Vishal Tomar")
+        self.users.documents.append(manager)
+        self.research.add(self.teacher, 2, entered_by=manager)
+        headers = self.auth(self.dean)
+
+        listed = self.client.get("/dean/teachers", headers=headers).json()["teachers"]
+        row = next(t for t in listed if t["email"] == self.teacher["email"])
+        self.assertEqual((row["event_count"], row["research_count"]), (0, 2))
+
+        refused = self.client.delete(f"/dean/teachers/{self.teacher['_id']}", headers=headers)
+        self.assertEqual(refused.status_code, 409)
+        self.assertIn("Has 2 research records.", refused.json()["detail"])
+        self.assertIsNotNone(self.doc(self.teacher))
+
+        bulk = self.client.post("/dean/teachers/bulk-delete", headers=headers, json={
+            "user_ids": [str(self.teacher["_id"]), str(self.signed_in_teacher["_id"])]}).json()
+        by_id = {r["user_id"]: r for r in bulk["results"]}
+        self.assertEqual(by_id[str(self.teacher["_id"])]["status"], "skipped")
+        self.assertIn("research record", by_id[str(self.teacher["_id"])]["reason"])
+        self.assertEqual(by_id[str(self.signed_in_teacher["_id"])]["status"], "deleted")
+        self.assertIsNotNone(self.doc(self.teacher))
+
+        self.events.add(self.teacher, 1)
+        both = self.client.delete(f"/dean/teachers/{self.teacher['_id']}", headers=headers)
+        self.assertIn("Has 1 event and 2 research records.", both.json()["detail"])
+
+    def test_superadmin_cannot_delete_an_account_with_research_records(self) -> None:
+        manager = _user("event_manager", name="Vishal Tomar")
+        self.users.documents.append(manager)
+        self.research.add(self.teacher, 1, entered_by=manager)
+        for person, label in ((self.teacher, "1 research record"), (manager, "1 research record")):
+            refused = self.client.delete(f"/superadmin/users/{person['_id']}", headers=self.auth(self.superadmin))
+            self.assertEqual(refused.status_code, 409, refused.text)
+            self.assertIn(label, refused.json()["detail"])
+            self.assertIsNotNone(self.doc(person))
+
     def test_a_removed_teacher_without_events_can_be_deleted(self) -> None:
         headers = self.auth(self.dean)
         self.client.post(f"/dean/teachers/{self.teacher['_id']}/remove", headers=headers)
@@ -476,6 +548,22 @@ class RemoveAndDeleteTests(DeanTeacherTestCase):
         for bad in (str(ObjectId()), "not-an-id"):
             response = self.client.delete(f"/dean/teachers/{bad}", headers=self.auth(self.dean))
             self.assertEqual(response.status_code, 404)
+
+
+class SuperadminRoleChangeTests(DeanTeacherTestCase):
+    def test_make_dean_and_make_teacher_end_the_old_sessions(self) -> None:
+        """The old panel kept running and failed every action with 403."""
+        teacher_headers = self.auth(self.teacher)
+        made = self.client.patch(f"/superadmin/users/{self.teacher['_id']}/make-dean", headers=self.auth(self.superadmin))
+        self.assertEqual(made.status_code, 200, made.text)
+        self.assertIn("signed out", made.json()["message"])
+        self.assertEqual(self.client.get("/users/me", headers=teacher_headers).status_code, 401)
+
+        dean_headers = self.auth(self.teacher)
+        back = self.client.patch(f"/superadmin/users/{self.teacher['_id']}/make-teacher", headers=self.auth(self.superadmin))
+        self.assertEqual(back.status_code, 200, back.text)
+        self.assertEqual(self.client.get("/users/me", headers=dean_headers).status_code, 401)
+        self.assertEqual(self.doc(self.teacher)["role"], "teacher")
 
 
 class PromoteTests(DeanTeacherTestCase):

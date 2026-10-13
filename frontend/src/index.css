@@ -307,6 +307,14 @@ input::-ms-clear {
     overflow-wrap: anywhere;
   }
 
+  /* A page about one record (see PageHero's `compact`): the title is a
+     heading, not a banner, so a long event name takes two lines, not five. */
+  .page-hero-compact .page-hero-title {
+    font-size: clamp(1.3rem, 2.2vw, 1.8rem);
+    line-height: 1.1;
+    letter-spacing: -.02em;
+  }
+
   .ridge-canvas {
     position: absolute;
     inset: 0;
@@ -785,6 +793,16 @@ input::-ms-clear {
 
   .input::placeholder {
     color: rgb(var(--c-muted) / .7);
+  }
+
+  /* A select still on its "Choose…" option reads as a placeholder; the
+     options in its open list keep the normal ink. */
+  select.input.is-placeholder {
+    color: rgb(var(--c-muted) / .7);
+  }
+
+  select.input.is-placeholder option {
+    color: rgb(var(--c-ink));
   }
 
   .input:focus {
@@ -1515,7 +1533,8 @@ input::-ms-clear {
     color: rgb(var(--c-ink));
   }
 
-  .tab[aria-selected="true"] {
+  .tab[aria-selected="true"],
+  .tab[aria-current="page"] {
     color: rgb(var(--c-ink));
     background: rgb(var(--c-raised) / .85);
     box-shadow: inset 0 0 0 1px rgb(var(--c-line) / .08);
@@ -1531,7 +1550,8 @@ input::-ms-clear {
     color: rgb(var(--c-muted));
   }
 
-  .tab[aria-selected="true"] .tab-count {
+  .tab[aria-selected="true"] .tab-count,
+  .tab[aria-current="page"] .tab-count {
     background: rgb(var(--c-accent) / .16);
     color: rgb(var(--c-accent));
   }
@@ -1568,6 +1588,12 @@ input::-ms-clear {
     to { transform: none; opacity: 1; }
   }
 
+  /* The gallery's album: a fixed height, so stepping between albums of
+     different sizes does not make the panel jump. */
+  .album-panel {
+    height: 92svh;
+  }
+
   @media (min-width: 640px) {
     .hv-backdrop {
       align-items: center;
@@ -1582,6 +1608,14 @@ input::-ms-clear {
 
     .modal-panel-lg {
       max-width: 46rem;
+    }
+
+    .modal-panel-xl {
+      max-width: 76rem;
+    }
+
+    .album-panel {
+      height: 86svh;
     }
   }
 
@@ -1676,4 +1710,34 @@ input::-ms-clear {
       animation-duration: 2s;
     }
   }
+}
+
+/* ------------------------------------------------------------ research charts
+   The dataviz reference categorical palette, one slot per research category
+   for the active categories (journal, conference, patent, book, other), with
+   the remaining categories keeping their established palette slots. Both
+   sets were run through validate_palette.js against the card surfaces they
+   sit on (#ffffff light, #10141c dark): every check passes. Three light slots
+   are under 3:1 on white, so every chart carries value labels and a table
+   view. Dark is its own stepped set, not a flip. */
+:root {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --chart-grid: #e1e0d9;
+  --chart-axis: #898781;
+}
+
+:root[data-theme="dark"] {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --chart-grid: #2c2c2a;
+  --chart-axis: #898781;
 }

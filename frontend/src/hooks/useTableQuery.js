@@ -34,6 +34,9 @@ export default function useTableQuery(defaults = {}, { paginate = true } = {}) {
       startDate: searchParams.get("start_date") ?? defaults.startDate ?? "",
       endDate: searchParams.get("end_date") ?? defaults.endDate ?? "",
       source: searchParams.get("source") ?? defaults.source ?? "",
+      // The Dean gallery's: photos or videos, and albums or the photo wall.
+      media: searchParams.get("media") ?? defaults.media ?? "",
+      view: searchParams.get("view") ?? defaults.view ?? "",
       skip: paginate ? (page - 1) * per : 0,
     };
     // defaults is a literal at every call site; re-reading it per render is fine.
@@ -47,6 +50,8 @@ export default function useTableQuery(defaults = {}, { paginate = true } = {}) {
     defaults.startDate,
     defaults.endDate,
     defaults.source,
+    defaults.media,
+    defaults.view,
   ]);
 
   const write = useCallback(
@@ -65,6 +70,8 @@ export default function useTableQuery(defaults = {}, { paginate = true } = {}) {
       if (next.startDate) params.set("start_date", next.startDate);
       if (next.endDate) params.set("end_date", next.endDate);
       if (next.source) params.set("source", next.source);
+      if (next.media) params.set("media", next.media);
+      if (next.view) params.set("view", next.view);
       setSearchParams(params, { replace });
     },
     [paginate, setSearchParams],
@@ -108,8 +115,11 @@ export default function useTableQuery(defaults = {}, { paginate = true } = {}) {
         startDate: "",
         endDate: "",
         source: "",
+        media: "",
+        // A view is not a filter: clearing the filters keeps it.
+        view: query.view,
       }),
-    [query.per, write],
+    [query.per, query.view, write],
   );
 
   return { query, setFilter, setFilters, setPage, setPerPage, reset };

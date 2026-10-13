@@ -18,6 +18,9 @@ from app.routers import (
     events,
     files,
     reports,
+    research,
+    research_showcases,
+    research_tools,
     superadmin,
     users,
 )
@@ -36,6 +39,19 @@ logger = logging.getLogger(__name__)
 
 INDEX_RETRY_INITIAL_SECONDS = 5
 INDEX_RETRY_MAX_SECONDS = 300
+
+
+def _settle_manager_research() -> None:
+    """Record Event Manager research submissions still waiting for the Dean
+    (made before they were recorded directly). Never blocks startup."""
+    from app.routers.research import record_waiting_manager_submissions
+
+    try:
+        settled = record_waiting_manager_submissions()
+        if settled:
+            logger.info("research_manager_submissions_recorded count=%d", len(settled))
+    except Exception as error:  # pragma: no cover - depends on the environment
+        logger.warning("research_manager_submissions_not_recorded error=%s", error)
 
 
 def _retry_indexes_forever(stop: threading.Event) -> None:
@@ -81,6 +97,7 @@ async def lifespan(_: FastAPI):
     try:
         ensure_indexes()
         logger.info("mongodb_indexes_ready db=%s", settings.mongodb_db_name)
+        _settle_manager_research()
     except Exception as error:  # pragma: no cover - depends on the environment
         logger.error("mongodb_index_setup_failed error=%s -- retrying in background", error)
         threading.Thread(
@@ -111,8 +128,13 @@ app = FastAPI(
 # GLOBAL ERROR HANDLERS
 # ============================================================
 
+_GENERIC_413 = "The uploaded file is too large for this server. Please check the file size limits."
+# What Starlette puts in an HTTPException raised without a detail of its own.
+_DEFAULT_413_PHRASES = {"Request Entity Too Large", "Content Too Large", "Payload Too Large"}
+
+
 @app.exception_handler(413)
-async def request_entity_too_large(_request: Request, _exc: Exception):
+async def request_entity_too_large(_request: Request, exc: Exception):
     """Return a JSON 413 instead of an HTML page.
 
     uvicorn / h11 can reject an oversized body before it even reaches the
@@ -125,11 +147,17 @@ async def request_entity_too_large(_request: Request, _exc: Exception):
     JSON. The Cloudflare case still cannot be caught here (the response
     never reaches the app), but it is handled in the frontend by inspecting
     xhr.status before falling back to the generic error message.
+
+    A 413 the app raised itself carries a specific message -- "Photos must be
+    smaller than 1 MB", the PRD 11 video copy -- and that message is kept:
+    this handler is keyed by status code, so it also receives every
+    HTTPException(413) from the upload routes, and replacing their detail told
+    a teacher only that the file was "too large for this server".
     """
-    return JSONResponse(
-        status_code=413,
-        content={"detail": "The uploaded file is too large for this server. Please check the file size limits."},
-    )
+    detail = getattr(exc, "detail", None)
+    if not isinstance(detail, str) or not detail.strip() or detail in _DEFAULT_413_PHRASES:
+        detail = _GENERIC_413
+    return JSONResponse(status_code=413, content={"detail": detail})
 
 
 # ============================================================
@@ -217,6 +245,11 @@ app.include_router(files.router)
 
 # Event Manager role: events recorded and reported without Dean review
 app.include_router(event_manager.router)
+
+# Research portfolio: Event Managers and teachers record, the Dean verifies
+app.include_router(research.router)
+app.include_router(research_tools.router)
+app.include_router(research_showcases.router)
 
 
 # ============================================================

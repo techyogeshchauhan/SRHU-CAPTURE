@@ -48,6 +48,9 @@ function TeacherDashboard() {
   const navigate = useNavigate();
   const originState = useOriginState();
   const panel = usePanel();
+  // The Event Manager's dashboard follows the Dean's: compact hero, compact
+  // KPI boxes, card headings at one size. The teacher's is left as it was.
+  const manager = panel.role === "event_manager";
 
   const [profile, setProfile] = useState(null);
   const [events, setEvents] = useState([]);
@@ -252,7 +255,7 @@ function TeacherDashboard() {
           : "Record events, duplicate previous ones, and download their reports."
       }
     >
-      <div className="mx-auto w-full max-w-wrap px-5 py-8 sm:px-8">
+      <div className={`mx-auto w-full max-w-wrap px-5 sm:px-8 ${manager ? "py-6" : "py-8"}`}>
 
         {loadError && (
           <div className="toast toast-err mb-6" role="alert">
@@ -279,10 +282,15 @@ function TeacherDashboard() {
         )}
 
         <PageHero
-          eyebrow="Overview"
+          compact={manager}
+          eyebrow={manager ? undefined : "Overview"}
           title={panel.approval ? "Teacher" : "Event Manager"}
           accent="Portal"
-          subtitle={`Welcome back, ${profile?.name || panel.roleLabel}. Manage your campus events and proposals from one place.`}
+          subtitle={
+            manager
+              ? undefined
+              : `Welcome back, ${profile?.name || panel.roleLabel}. Manage your campus events and proposals from one place.`
+          }
           actions={
             <Link
               to={`${panel.base}/create-event`}
@@ -298,7 +306,16 @@ function TeacherDashboard() {
         {/* ------------------------------------------------ summary cards
             The shared KPI card, identical on the Dean and Super Admin
             dashboards. */}
-        <div className={`mt-6 grid gap-3 sm:gap-4 ${summaryCards.length === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2 lg:grid-cols-4"}`}>
+        <div
+          className={`grid ${
+            manager
+              ? // The Dean's KPI grid, so each box is the Dean's size.
+                "mt-4 grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
+              : `mt-6 gap-3 sm:gap-4 ${
+                  summaryCards.length === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2 lg:grid-cols-4"
+                }`
+          }`}
+        >
           {summaryCards.map((card, i) => (
             <StatCard
               key={card.key}
@@ -309,6 +326,7 @@ function TeacherDashboard() {
               Icon={card.Icon}
               track={card.track}
               hint={card.hint}
+              compact={manager}
             />
           ))}
         </div>
@@ -316,21 +334,34 @@ function TeacherDashboard() {
         {/* ------------------------------------------------- recent events
             Same 1.5rem gap as hero -> cards, so the three blocks sit on one
             even rhythm. */}
-        <section className="glass mt-6 overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b hairline px-5 py-5 sm:px-6">
-            <div>
-              <p className="eyebrow">Activity</p>
-              <h2 className="h3 mt-1 text-ink">Recent Events</h2>
-              <p className="prose-muted mt-0.5 text-sm">
-                Your recently created, modified, or submitted events
-              </p>
+        <section className={`glass overflow-hidden ${manager ? "mt-4" : "mt-6"}`}>
+          {manager ? (
+            <div className="flex items-center justify-between gap-3 border-b hairline px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <IconActivity className="h-4 w-4 text-accent" />
+                <h2 className="h3 text-base text-ink">Recent events</h2>
+              </div>
+              <Link to={`${panel.base}/my-events`} className="btn btn-ghost btn-xs">
+                View all
+                <IconArrowRight />
+              </Link>
             </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b hairline px-5 py-5 sm:px-6">
+              <div>
+                <p className="eyebrow">Activity</p>
+                <h2 className="h3 mt-1 text-ink">Recent Events</h2>
+                <p className="prose-muted mt-0.5 text-sm">
+                  Your recently created, modified, or submitted events
+                </p>
+              </div>
 
-            <Link to={`${panel.base}/my-events`} className="btn btn-ghost btn-sm">
-              View All Events
-              <IconArrowRight />
-            </Link>
-          </div>
+              <Link to={`${panel.base}/my-events`} className="btn btn-ghost btn-sm">
+                View All Events
+                <IconArrowRight />
+              </Link>
+            </div>
+          )}
 
           {recentCombinedList.length === 0 ? (
             <div className="flex flex-col items-center px-6 py-16 text-center">
@@ -361,7 +392,7 @@ function TeacherDashboard() {
                       <p className="min-w-0 truncate font-display text-sm font-semibold text-ink">
                         {item.event_name || item.eventName || "Untitled Draft"}
                       </p>
-                      <StatusChip status={item.status} />
+                      <StatusChip status={item.status} archived={Boolean(item.archived_at)} />
                     </div>
                     <p className="prose-muted mt-1 text-xs">
                       {[item.event_date || item.eventDate, item.location]
@@ -424,7 +455,7 @@ function TeacherDashboard() {
                           </td>
 
                           <td className="whitespace-nowrap px-5 py-3.5">
-                            <StatusChip status={item.status} />
+                            <StatusChip status={item.status} archived={Boolean(item.archived_at)} />
                           </td>
 
                           <td className="whitespace-nowrap px-5 py-3.5 text-right">

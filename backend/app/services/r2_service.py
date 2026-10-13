@@ -8,7 +8,10 @@ from R2 without the bytes passing through this API.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import uuid
+from collections import OrderedDict
 from functools import lru_cache
 from urllib.parse import quote
 
@@ -210,6 +213,12 @@ def read_range(object_key: str, *, length: int) -> bytes:
         return body.read(length)
 
 
+def download_to(object_key: str, fileobj) -> None:
+    """Stream an object into ``fileobj`` (e.g. a spooled temporary file), in
+    parts, without holding it in memory."""
+    _client().download_fileobj(settings.r2_bucket_name, object_key, fileobj)
+
+
 def _error_code(error: ClientError) -> str:
     return str(error.response.get("Error", {}).get("Code", ""))
 
@@ -256,8 +265,63 @@ def object_url(
         "ResponseContentDisposition": content_disposition(disposition, name),
     }
 
-    return _client().generate_presigned_url(
-        "get_object",
-        Params=params,
-        ExpiresIn=settings.r2_signed_url_expiry,
-    )
+    expiry = settings.r2_signed_url_expiry
+    # Without this R2 serves the object with no caching headers, and the
+    # browser is left to guess how long it may keep it.
+    params["ResponseCacheControl"] = f"private, max-age={expiry}"
+
+    key = (object_key, served_type, params["ResponseContentDisposition"])
+    cached = _signed_urls.get(key)
+    if cached is not None:
+        return cached
+
+    url = _client().generate_presigned_url("get_object", Params=params, ExpiresIn=expiry)
+    _signed_urls.put(key, url)
+    return url
+
+
+class _SignedUrlMemo:
+    """Recently signed GET URLs, handed out again while still young.
+
+    A pre-signed URL carries the time it was signed, so signing afresh on every
+    read gives the same photo a new URL each time -- and a browser caches by
+    URL, so every gallery visit downloaded every image again. Reusing a URL for
+    a quarter of its lifetime (at most an hour) lets the browser cache work,
+    while every URL handed out still has at least three quarters of its
+    lifetime left.
+    """
+
+    def __init__(self, max_entries: int = 4096) -> None:
+        self._entries: OrderedDict[tuple, tuple[float, str]] = OrderedDict()
+        self._max_entries = max_entries
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def reuse_seconds() -> int:
+        return max(0, min(60 * 60, int(settings.r2_signed_url_expiry) // 4))
+
+    def get(self, key: tuple) -> str | None:
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            signed_at, url = entry
+            if time.monotonic() - signed_at >= self.reuse_seconds():
+                del self._entries[key]
+                return None
+            self._entries.move_to_end(key)
+            return url
+
+    def put(self, key: tuple, url: str) -> None:
+        with self._lock:
+            self._entries[key] = (time.monotonic(), url)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+_signed_urls = _SignedUrlMemo()

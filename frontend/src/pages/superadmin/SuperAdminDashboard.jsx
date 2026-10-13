@@ -140,6 +140,7 @@ function SuperAdminDashboard() {
       label: "Pending Events",
       value: stats.pending_events,
       hint: "Awaiting a Dean decision",
+      to: "/superadmin/events?status=pending",
       track: trackOf("pending"),
       Icon: IconClock,
     },

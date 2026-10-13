@@ -53,8 +53,19 @@ def tearDownModule() -> None:
 
 TEACHER = {"id": str(ObjectId()), "name": "Meera", "email": "m@srhu.edu.in", "role": "teacher"}
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
-JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+def _image(fmt: str, size=(16, 12), color=(200, 60, 40)) -> bytes:
+    """A real (small) image: photos are re-encoded as WebP, so they must decode."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", size, color).save(buffer, fmt)
+    return buffer.getvalue()
+
+
+PNG = _image("PNG")
+JPEG = _image("JPEG")
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64
 PDF = b"%PDF-1.7\n" + b"\x00" * 64
 DOCX = b"PK\x03\x04" + b"\x00" * 64
@@ -183,13 +194,25 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(self.upload("page.pdf", PDF, "text/html", kind="documents").status_code, 400)
         self.assertEqual(self.upload("page.html", PDF, "application/pdf", kind="documents").status_code, 400)
 
-    def test_valid_photo_is_stored_with_the_canonical_type(self) -> None:
+    def test_valid_photo_is_stored_as_webp(self) -> None:
         response = self.upload("photo.JPG", JPEG, "image/jpeg")
         self.assertEqual(response.status_code, 201, response.text)
         media = response.json()["media"]
         self.assertEqual(media["media_type"], "image")
-        self.assertEqual(media["content_type"], "image/jpeg")
+        # Every photo is stored as WebP, whatever it was uploaded as.
+        self.assertEqual(media["content_type"], "image/webp")
+        self.assertEqual(media["file_name"], "photo.webp")
+        self.assertEqual(media["original_name"], "photo.JPG")
+        self.assertEqual(self.saved[-1]["content_type"], "image/webp")
         self.assertRegex(media["media_url"], r"/files/[0-9a-f]{24}\?exp=\d+&sig=[0-9a-f]{64}$")
+
+    def test_an_unreadable_photo_is_refused(self) -> None:
+        """Right signature, but no image behind it: refused, nothing stored."""
+        before = len(self.saved)
+        response = self.upload("broken.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, "image/png")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("could not be read", response.json()["detail"])
+        self.assertEqual(len(self.saved), before)
 
     def test_document_with_generic_declared_type_is_accepted(self) -> None:
         response = self.upload("report.docx", DOCX, "application/octet-stream", kind="documents")

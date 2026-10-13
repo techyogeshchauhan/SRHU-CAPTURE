@@ -12,6 +12,7 @@ import {
   decodeEventMetadata,
 } from "../../utils/draftStorage";
 import TeacherShell from "../../components/teacher/TeacherShell";
+import PageHero from "../../components/teacher/PageHero";
 import { usePanel } from "../../components/teacher/panel";
 import {
   MAX_EVENTS_PER_REPORT,
@@ -147,7 +148,7 @@ function EventActions({ item, canDelete, onDuplicate, onDelete, originState, onR
         </Link>
       )}
 
-      {panel.reports && !item.isDraft && item.status === "recorded" && (
+      {panel.reports && !item.isDraft && item.status === "recorded" && !item.archived_at && (
         <button
           type="button"
           onClick={() => onReport(item)}
@@ -190,6 +191,7 @@ function MyEvents() {
   const [searchParams, setSearchParams] = useSearchParams();
   const originState = useOriginState();
   const panel = usePanel();
+  const manager = panel.role === "event_manager";
   const statusTabs = panel.approval ? STATUS_TABS : DIRECT_STATUS_TABS;
 
   const [selected, setSelected] = useState(() => new Set());
@@ -437,7 +439,7 @@ function MyEvents() {
   // Event Manager; drafts and not-yet-approved events for a teacher); a report
   // covers the Event Manager's recorded events.
   const selectable = () => true;
-  const reportable = (item) => panel.reports && !item.isDraft && item.status === "recorded";
+  const reportable = (item) => panel.reports && !item.isDraft && item.status === "recorded" && !item.archived_at;
   const visibleSelectable = filteredItems.map((item) => item.id);
   const allVisibleSelected =
     visibleSelectable.length > 0 && visibleSelectable.every((id) => selected.has(id));
@@ -601,6 +603,202 @@ function MyEvents() {
   // toolbar, the status chips and the column headers always stay put.
   // ============================================================
 
+  // Title, search, date range and the primary action -- in the hero for
+  // the Event Manager (as on the Dean's All Events), in the command bar
+  // for the teacher.
+  const commandControls = (
+    <>
+      {/* Search */}
+      <div className={`relative w-full ${manager ? "sm:w-52 xl:w-56" : "sm:w-60 xl:w-72"}`}>
+        <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-muted">
+          <IconSearch className="h-4 w-4" />
+        </span>
+
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={manager ? "Search events…" : "Search name, venue, or department…"}
+          aria-label="Search events"
+          className="input pl-10 pr-9"
+        />
+
+        {searchQuery && (
+          <button
+            type="button"
+            onClick={() => setSearchQuery("")}
+            aria-label="Clear search"
+            className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted transition hover:text-ink"
+          >
+            <IconX className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {/* Date range. A select rather than five chips: it carries the
+          same five choices in one control instead of a whole row. */}
+      <select
+        value={dateFilter}
+        onChange={(e) => {
+          const val = e.target.value;
+          setDateFilter(val);
+          if (val === "custom") {
+            setShowDateRangeModal(true);
+          }
+        }}
+        aria-label="Filter by date range"
+        className="input w-full sm:w-auto"
+      >
+        {DATE_FILTERS.map((df) => (
+          <option key={df.key} value={df.key}>
+            {df.label}
+          </option>
+        ))}
+      </select>
+
+      <button
+        type="button"
+        onClick={() => setShowDateRangeModal(true)}
+        className={`btn btn-sm shrink-0 ${
+          dateFilter === "custom" && (customFromDate || customToDate)
+            ? "btn-primary font-medium"
+            : "btn-ghost"
+        }`}
+        title="Set date range"
+        aria-label="Set date range"
+      >
+        <IconCalendar />
+        <span>
+          {dateFilter === "custom" && customFromDate && customToDate
+            ? `${customFromDate} – ${customToDate}`
+            : dateFilter === "custom" && customFromDate
+              ? `From ${customFromDate}`
+              : dateFilter === "custom" && customToDate
+                ? `Until ${customToDate}`
+                : "Date Range"}
+        </span>
+      </button>
+
+      {dateFilter === "custom" && (
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <input
+            type="date"
+            value={customFromDate}
+            onChange={(e) => setCustomFromDate(e.target.value)}
+            aria-label="From date"
+            className="input min-w-0 flex-1 sm:w-38 sm:flex-none"
+          />
+          <span className="text-xs text-muted">to</span>
+          <input
+            type="date"
+            value={customToDate}
+            onChange={(e) => setCustomToDate(e.target.value)}
+            aria-label="To date"
+            className="input min-w-0 flex-1 sm:w-38 sm:flex-none"
+          />
+        </div>
+      )}
+
+      <Link
+        to={`${panel.base}/create-event`}
+        state={originState}
+        className="btn btn-primary btn-sm shrink-0"
+      >
+        <IconPlus />
+        <span className="hidden sm:inline">New Event</span>
+      </Link>
+    </>
+  );
+
+  const statusBar = (
+    <>
+      {statusTabs.map((tab) => {
+        const isSelected = activeFilter === tab.key;
+
+        return (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => handleTabClick(tab.key)}
+            aria-selected={isSelected}
+            role="tab"
+            className="tab"
+          >
+            {tab.label}
+            <span className="tab-count">{tabCounts[tab.key] || 0}</span>
+          </button>
+        );
+      })}
+
+      <div className="ml-auto flex flex-wrap items-center gap-3">
+        {visibleSelectable.length > 0 && (
+          <>
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-ink">
+              <input
+                type="checkbox"
+                checked={allVisibleSelected}
+                onChange={toggleAllVisible}
+                aria-label="Select all shown events"
+                className="h-4 w-4 cursor-pointer rounded border-line text-accent focus:ring-accent"
+              />
+              Select all
+            </label>
+            <button
+              type="button"
+              onClick={() => setBulkSubmit(true)}
+              disabled={submittableSelected.length === 0 || bulkSubmitting || Boolean(reportingId)}
+              className="btn btn-primary btn-xs"
+              title={
+                browserOnlySelected.length && !submittableSelected.length
+                  ? "Drafts kept only in this browser need their details completed in the form first."
+                  : undefined
+              }
+            >
+              {bulkSubmitting ? <span className="spin h-3 w-3" /> : <IconCheckCircle />}
+              {submittableSelected.length > 0
+                ? `${submitVerb} selected (${submittableSelected.length})`
+                : `${submitVerb} selected`}
+            </button>
+            {panel.reports && (
+              <button
+                type="button"
+                onClick={handleReportSelected}
+                disabled={selectedIds.length === 0 || Boolean(reportingId)}
+                className="btn btn-brand btn-xs"
+              >
+                {reportingId === "selected" ? <span className="spin h-3 w-3" /> : <IconDownload />}
+                {selectedIds.length > 1
+                  ? `Report for ${selectedIds.length} events`
+                  : selectedIds.length === 1
+                    ? "Report for 1 event"
+                    : "Report for selected"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setBulkDelete({ confirmText: "" })}
+              disabled={deletableSelected.length === 0 || bulkDeleting || Boolean(reportingId)}
+              className="btn btn-danger btn-xs"
+            >
+              <IconTrash />
+              {deletableSelected.length > 0 ? `Delete selected (${deletableSelected.length})` : "Delete selected"}
+            </button>
+          </>
+        )}
+        <p className="num text-xs font-medium text-muted">
+          Showing {filteredItems.length} of {allCombinedItems.length}
+        </p>
+
+        {isFiltered && (
+          <button type="button" onClick={handleClearFilters} className="btn btn-ghost btn-xs">
+            <IconRotateCcw />
+            Clear filters
+          </button>
+        )}
+      </div>
+    </>
+  );
+
   return (
     <TeacherShell
       active="events"
@@ -655,203 +853,45 @@ function MyEvents() {
             Title, search, date range, status chips and the
             primary action — every control on one screen.
         ================================================ */}
-        <div className="glass shrink-0 overflow-hidden">
-          <div className="flex flex-wrap items-center gap-2.5 px-4 py-3.5 sm:px-5">
-
-            <div className="mr-auto min-w-0">
-              <p className="eyebrow">{panel.label}</p>
-              <h1 className="h3 mt-0.5 truncate text-ink">My Events</h1>
-            </div>
-
-            {/* Search */}
-            <div className="relative w-full sm:w-60 xl:w-72">
-              <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-muted">
-                <IconSearch className="h-4 w-4" />
-              </span>
-
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search name, venue, or department…"
-                aria-label="Search events"
-                className="input pl-10 pr-9"
-              />
-
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery("")}
-                  aria-label="Clear search"
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted transition hover:text-ink"
-                >
-                  <IconX className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-
-            {/* Date range. A select rather than five chips: it carries the
-                same five choices in one control instead of a whole row. */}
-            <select
-              value={dateFilter}
-              onChange={(e) => {
-                const val = e.target.value;
-                setDateFilter(val);
-                if (val === "custom") {
-                  setShowDateRangeModal(true);
+        {manager ? (
+          <>
+            <div className="shrink-0">
+              <PageHero
+                compact
+                toolbar
+                title="My"
+                accent="Events"
+                actions={
+                  <div className="flex flex-wrap items-center justify-end gap-2.5">
+                    {commandControls}
+                  </div>
                 }
-              }}
-              aria-label="Filter by date range"
-              className="input w-full sm:w-auto"
-            >
-              {DATE_FILTERS.map((df) => (
-                <option key={df.key} value={df.key}>
-                  {df.label}
-                </option>
-              ))}
-            </select>
+              />
+            </div>
 
-            <button
-              type="button"
-              onClick={() => setShowDateRangeModal(true)}
-              className={`btn btn-sm shrink-0 ${
-                dateFilter === "custom" && (customFromDate || customToDate)
-                  ? "btn-primary font-medium"
-                  : "btn-ghost"
-              }`}
-              title="Set date range"
-              aria-label="Set date range"
-            >
-              <IconCalendar />
-              <span>
-                {dateFilter === "custom" && customFromDate && customToDate
-                  ? `${customFromDate} – ${customToDate}`
-                  : dateFilter === "custom" && customFromDate
-                    ? `From ${customFromDate}`
-                    : dateFilter === "custom" && customToDate
-                      ? `Until ${customToDate}`
-                      : "Date Range"}
-              </span>
-            </button>
-
-            {dateFilter === "custom" && (
-              <div className="flex w-full items-center gap-2 sm:w-auto">
-                <input
-                  type="date"
-                  value={customFromDate}
-                  onChange={(e) => setCustomFromDate(e.target.value)}
-                  aria-label="From date"
-                  className="input min-w-0 flex-1 sm:w-38 sm:flex-none"
-                />
-                <span className="text-xs text-muted">to</span>
-                <input
-                  type="date"
-                  value={customToDate}
-                  onChange={(e) => setCustomToDate(e.target.value)}
-                  aria-label="To date"
-                  className="input min-w-0 flex-1 sm:w-38 sm:flex-none"
-                />
+            {/* Status tabs + result count */}
+            <div className="glass shrink-0 overflow-hidden">
+              <div className="flex flex-wrap items-center gap-1.5 px-4 py-2.5 sm:px-5">
+                {statusBar}
               </div>
-            )}
+            </div>
+          </>
+        ) : (
+          <div className="glass shrink-0 overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2.5 px-4 py-3.5 sm:px-5">
+              <div className="mr-auto min-w-0">
+                <p className="eyebrow">{panel.label}</p>
+                <h1 className="h3 mt-0.5 truncate text-ink">My Events</h1>
+              </div>
+              {commandControls}
+            </div>
 
-            <Link
-              to={`${panel.base}/create-event`}
-              state={originState}
-              className="btn btn-primary btn-sm shrink-0"
-            >
-              <IconPlus />
-              <span className="hidden sm:inline">New Event</span>
-            </Link>
-          </div>
-
-          {/* Status tabs + result count */}
-          <div className="flex flex-wrap items-center gap-1.5 border-t hairline bg-raised/35 px-4 py-2.5 sm:px-5">
-            {statusTabs.map((tab) => {
-              const isSelected = activeFilter === tab.key;
-
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => handleTabClick(tab.key)}
-                  aria-selected={isSelected}
-                  role="tab"
-                  className="tab"
-                >
-                  {tab.label}
-                  <span className="tab-count">{tabCounts[tab.key] || 0}</span>
-                </button>
-              );
-            })}
-
-            <div className="ml-auto flex flex-wrap items-center gap-3">
-              {visibleSelectable.length > 0 && (
-                <>
-                  <label className="inline-flex items-center gap-2 text-xs font-medium text-ink">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={toggleAllVisible}
-                      aria-label="Select all shown events"
-                      className="h-4 w-4 cursor-pointer rounded border-line text-accent focus:ring-accent"
-                    />
-                    Select all
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setBulkSubmit(true)}
-                    disabled={submittableSelected.length === 0 || bulkSubmitting || Boolean(reportingId)}
-                    className="btn btn-primary btn-xs"
-                    title={
-                      browserOnlySelected.length && !submittableSelected.length
-                        ? "Drafts kept only in this browser need their details completed in the form first."
-                        : undefined
-                    }
-                  >
-                    {bulkSubmitting ? <span className="spin h-3 w-3" /> : <IconCheckCircle />}
-                    {submittableSelected.length > 0
-                      ? `${submitVerb} selected (${submittableSelected.length})`
-                      : `${submitVerb} selected`}
-                  </button>
-                  {panel.reports && (
-                    <button
-                      type="button"
-                      onClick={handleReportSelected}
-                      disabled={selectedIds.length === 0 || Boolean(reportingId)}
-                      className="btn btn-brand btn-xs"
-                    >
-                      {reportingId === "selected" ? <span className="spin h-3 w-3" /> : <IconDownload />}
-                      {selectedIds.length > 1
-                        ? `Report for ${selectedIds.length} events`
-                        : selectedIds.length === 1
-                          ? "Report for 1 event"
-                          : "Report for selected"}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setBulkDelete({ confirmText: "" })}
-                    disabled={deletableSelected.length === 0 || bulkDeleting || Boolean(reportingId)}
-                    className="btn btn-danger btn-xs"
-                  >
-                    <IconTrash />
-                    {deletableSelected.length > 0 ? `Delete selected (${deletableSelected.length})` : "Delete selected"}
-                  </button>
-                </>
-              )}
-              <p className="num text-xs font-medium text-muted">
-                Showing {filteredItems.length} of {allCombinedItems.length}
-              </p>
-
-              {isFiltered && (
-                <button type="button" onClick={handleClearFilters} className="btn btn-ghost btn-xs">
-                  <IconRotateCcw />
-                  Clear filters
-                </button>
-              )}
+            {/* Status tabs + result count */}
+            <div className="flex flex-wrap items-center gap-1.5 border-t hairline bg-raised/35 px-4 py-2.5 sm:px-5">
+              {statusBar}
             </div>
           </div>
-        </div>
+        )}
 
         {/* ================================================
             EVENTS LIST
@@ -927,7 +967,7 @@ function MyEvents() {
                       </div>
 
                       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-muted">
-                        <StatusChip status={item.status} />
+                        <StatusChip status={item.status} archived={Boolean(item.archived_at)} />
                         {/* Joined rather than separate spans so a wrap never
                             strands a lone separator at the end of a line. */}
                         <span>
@@ -1027,7 +1067,7 @@ function MyEvents() {
                         </td>
 
                         <td className="whitespace-nowrap px-4 py-3">
-                          <StatusChip status={item.status} />
+                          <StatusChip status={item.status} archived={Boolean(item.archived_at)} />
                         </td>
 
                         <td className="whitespace-nowrap px-4 py-3 text-sm text-muted">

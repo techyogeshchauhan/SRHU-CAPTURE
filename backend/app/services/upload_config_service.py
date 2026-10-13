@@ -50,6 +50,12 @@ DEFAULT_UPLOAD_LIMITS: dict[str, Any] = {
     "photos_required": True,
     "videos_required": False,
     "documents_required": True,
+    # Evidence behind one research record, budgeted like documents.
+    "max_research_evidence_files": settings.max_research_evidence_files,
+    "max_research_evidence_total_mb": settings.max_research_evidence_total_mb,
+    # Whether a research record needs evidence before it can be submitted.
+    # Off by default: much research is recorded from a citation alone.
+    "research_evidence_required": False,
 }
 
 # upload kind -> the flag that makes it mandatory.
@@ -95,6 +101,7 @@ def _merge(doc: dict[str, Any] | None) -> dict[str, Any]:
     limits["max_video_size_bytes"] = limits["max_video_size_mb"] * mb
     limits["max_video_total_bytes"] = limits["max_video_total_mb"] * mb
     limits["max_documents_total_bytes"] = limits["max_documents_total_mb"] * mb
+    limits["max_research_evidence_total_bytes"] = limits["max_research_evidence_total_mb"] * mb
     return limits
 
 

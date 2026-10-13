@@ -13,8 +13,10 @@ export default function SettingsCard({
 }) {
   return (
     <section className="glass reveal flex flex-col p-5 sm:p-7" style={{ "--i": index }}>
-      <div className="flex items-center justify-between gap-3 border-b hairline pb-4">
-        <div className="flex items-center gap-3">
+      {/* Wraps on a phone: the formats chip drops under the title instead of
+          pushing the card wider than the screen. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b hairline pb-4">
+        <div className="flex min-w-0 items-center gap-3">
           <span
             className="icon-tile icon-tile-track"
             style={{ "--track": "rgb(var(--c-accent))" }}

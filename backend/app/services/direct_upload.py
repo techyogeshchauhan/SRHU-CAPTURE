@@ -33,6 +33,7 @@ import logging
 import math
 import time
 from datetime import timedelta
+from tempfile import SpooledTemporaryFile
 from types import SimpleNamespace
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -47,7 +48,7 @@ from app.database import (
     upload_sessions,
 )
 from app.models.documents import new_document_document, new_media_document
-from app.services import r2_service
+from app.services import photo_webp, r2_service
 from app.services.storage_service import (
     check_declared_size,
     check_file_signature,
@@ -424,6 +425,73 @@ def finalize_object(session: dict, *, per_file_bytes: int | None, what: str) -> 
         discard(session, FAILED)
         raise
     return session["size"]
+
+
+def convert_photo(session: dict) -> None:
+    """Store a verified direct-upload photo as WebP (services/photo_webp.py).
+
+    The browser uploaded the original straight to R2, so it is read back,
+    re-encoded, stored under a new ``.webp`` key, and the original deleted.
+    The session then describes the WebP -- key, name, type and size -- in
+    memory and in the database, so a retried /complete finds it already done
+    and the record (and any roll-back) points at the WebP. A photo that is
+    already WebP is left as it is.
+
+    Raises 400 (and frees the bytes) for a file that is not a readable image;
+    releases the session for a retry when R2 cannot be reached.
+    """
+    if session.get("media_type") != "image" or not photo_webp.needs_conversion(session.get("extension")):
+        return
+    original_key = session["object_key"]
+    source = SpooledTemporaryFile(max_size=photo_webp._SPOOL_THRESHOLD)
+    try:
+        try:
+            r2_service.download_to(original_key, source)
+        except (BotoCoreError, ClientError):
+            logger.exception("Could not read direct upload %s for WebP conversion", original_key)
+            release_session(session)
+            raise _storage_error() from None
+        source.seek(0)
+        try:
+            converted, size = photo_webp.convert_to_webp(source)
+        except HTTPException:
+            discard(session, FAILED)
+            raise
+    finally:
+        source.close()
+
+    file_name = photo_webp.webp_name(session["file_name"])
+    webp_key = r2_service.build_object_key(
+        event_id=session["event_id"], kind=session.get("kind") or "media", file_name=safe_file_name(file_name),
+    )
+    try:
+        _, disposition = serving_policy(photo_webp.WEBP_CONTENT_TYPE)
+        r2_service.upload_stream(
+            converted,
+            object_key=webp_key,
+            content_type=photo_webp.WEBP_CONTENT_TYPE,
+            metadata={"event_id": session["event_id"], "teacher_id": session.get("owner_id", "")},
+            content_disposition=content_disposition(disposition, file_name),
+        )
+    except (BotoCoreError, ClientError):
+        logger.exception("Could not store the WebP of direct upload %s", original_key)
+        release_session(session)
+        raise _storage_error() from None
+    finally:
+        converted.close()
+
+    changes = {
+        "object_key": webp_key,
+        "file_name": file_name,
+        "content_type": photo_webp.WEBP_CONTENT_TYPE,
+        "extension": photo_webp.WEBP_EXTENSION,
+        "size": size,
+    }
+    session.update(changes)
+    upload_sessions.update_one({"_id": session["_id"]}, {"$set": changes})
+    # The original is no longer needed; a failed delete is recorded for the sweep.
+    delete_stored({"object_key": original_key})
+    logger.info("direct_photo_converted_to_webp key=%s bytes=%d", webp_key, size)
 
 
 def new_record(session: dict) -> tuple[dict, dict]:

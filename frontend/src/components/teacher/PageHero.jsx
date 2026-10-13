@@ -10,19 +10,45 @@ import RidgeCanvas from "../landing/RidgeCanvas";
  *
  * `children` is an optional full-width row under the title — the event pages
  * put their date / venue / time facts there.
+ *
+ * `compact` is for a page about one record (an event) rather than a section
+ * of the app: the title drops to a heading size and takes the full width,
+ * with the actions in a narrow column beside it. A long event name at full
+ * hero size ran to five lines and pushed the record itself below the fold.
+ *
+ * `toolbar` (with `compact`) is for a section whose filters sit beside its
+ * short title: the title keeps its own width and the actions take the rest
+ * of the row, wrapping within it -- no empty strip, and no squeezed title.
  */
-export default function PageHero({ eyebrow, title, accent, subtitle, actions, children }) {
+export default function PageHero({
+  eyebrow,
+  title,
+  accent,
+  subtitle,
+  actions,
+  children,
+  compact = false,
+  toolbar = false,
+}) {
   return (
-    <section className="page-hero reveal">
+    <section className={`page-hero reveal ${compact ? "page-hero-compact" : ""}`}>
       <RidgeCanvas />
       <div className="hero-grid" aria-hidden="true" />
       <div className="hero-vignette-page" aria-hidden="true" />
 
-      <div className="relative z-10 p-6 sm:p-8">
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.15fr_0.85fr] lg:items-end lg:gap-8">
+      <div className={`relative z-10 ${compact ? "p-5 sm:p-6" : "p-6 sm:p-8"}`}>
+        <div
+          className={`grid grid-cols-1 lg:items-end ${
+            compact && toolbar
+              ? "gap-3 md:grid-cols-[max-content_minmax(0,1fr)] md:items-center md:gap-6"
+              : compact
+                ? "gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-6"
+                : "gap-5 lg:grid-cols-[1.15fr_0.85fr] lg:gap-8"
+          }`}
+        >
           <div className="min-w-0">
             {eyebrow && <p className="eyebrow">{eyebrow}</p>}
-            <h1 className="hero-title page-hero-title mt-2 uppercase text-ink">
+            <h1 className={`hero-title page-hero-title uppercase text-ink ${toolbar ? "whitespace-nowrap" : "mt-2"}`}>
               {title}
               {accent && (
                 <>
@@ -34,7 +60,11 @@ export default function PageHero({ eyebrow, title, accent, subtitle, actions, ch
               )}
             </h1>
             {subtitle && (
-              <p className="mt-3 max-w-2xl font-display text-base font-medium text-ink/90 sm:text-lg">
+              <p
+                className={`font-display font-medium text-ink/90 ${
+                  compact ? "mt-2 text-sm" : "mt-3 max-w-2xl text-base sm:text-lg"
+                }`}
+              >
                 {subtitle}
               </p>
             )}
@@ -45,7 +75,7 @@ export default function PageHero({ eyebrow, title, accent, subtitle, actions, ch
           )}
         </div>
 
-        {children && <div className="relative mt-6">{children}</div>}
+        {children && <div className={`relative ${compact ? "mt-4" : "mt-6"}`}>{children}</div>}
       </div>
     </section>
   );

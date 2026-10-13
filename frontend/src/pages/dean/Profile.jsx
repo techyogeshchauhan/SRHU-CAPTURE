@@ -8,6 +8,7 @@ import {
   signOut,
 } from "../../services/auth";
 import DeanShell from "../../components/dean/DeanShell";
+import PageHero from "../../components/teacher/PageHero";
 import LogoutConfirmModal from "../../components/common/LogoutConfirmModal";
 import EditProfileModal from "../../components/common/EditProfileModal";
 import PasswordField from "../../components/common/PasswordField";
@@ -365,7 +366,60 @@ function DeanProfile() {
       profile={profile}
       onLogout={handleLogout}
     >
-      <div className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6 sm:py-5 lg:px-8">
+      <div className="mx-auto w-full max-w-5xl px-5 py-6 sm:px-8">
+        <div className="mb-4">
+          {/* Who is signed in sits in the hero's own row, not a card under it. */}
+          <PageHero
+            compact
+            toolbar
+            title="My"
+            accent="Profile"
+            actions={
+              profile && (
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2.5 lg:justify-end">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/12 font-display text-base font-bold text-accent ring-1 ring-accent/20">
+                      {initialsOf(displayName, displayEmail)}
+                    </span>
+                    <div className="min-w-0">
+                      <h2 className="h3 truncate text-base text-ink">{displayName}</h2>
+                      <p className="truncate text-sm text-muted" title={displayEmail}>
+                        {displayEmail}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className="chip chip-sm chip-track"
+                      style={{ "--track": trackOfRole(role) }}
+                    >
+                      <span className="dot dot-sm" />
+                      {labelOfRole(role)}
+                    </span>
+                    <span
+                      className="chip chip-sm chip-track"
+                      style={{
+                        "--track": trackOf(isVerified ? "approved" : "pending"),
+                      }}
+                    >
+                      <span className="dot dot-sm" />
+                      {isVerified ? "Email verified" : "Email not verified"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEditOpen(true)}
+                      className="btn btn-ghost btn-sm"
+                    >
+                      <IconEdit className="h-4 w-4" />
+                      <span>Edit profile</span>
+                    </button>
+                  </div>
+                </div>
+              )
+            }
+          />
+        </div>
 
         {error && (
           <div
@@ -415,7 +469,7 @@ function DeanProfile() {
             aria-labelledby="change-password-heading"
           >
             <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 id="change-password-heading" className="text-sm font-semibold text-ink">
+              <h2 id="change-password-heading" className="h3 text-base text-ink">
                 Change password
               </h2>
               {!mustChange && (
@@ -483,60 +537,6 @@ function DeanProfile() {
         ) : (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18.5rem]">
 
-            {/* ---------------------------------------------------- identity */}
-            <section className="glass reveal relative overflow-hidden p-4 sm:p-5 lg:col-span-2">
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 left-0 w-1"
-                style={{ background: trackOfRole(role) }}
-              />
-
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
-                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent/12 font-display text-lg font-bold text-accent ring-1 ring-accent/20">
-                  {initialsOf(displayName, displayEmail)}
-                </span>
-
-                <div className="min-w-0 flex-1 basis-44">
-                  <p className="eyebrow text-[11px]">My Profile</p>
-                  <h1 className="truncate font-display text-xl font-bold leading-tight text-ink sm:text-2xl">
-                    {displayName}
-                  </h1>
-                  <p className="mt-0.5 truncate text-sm text-muted" title={displayEmail}>
-                    {displayEmail}
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditOpen(true)}
-                    className="btn btn-ghost btn-sm"
-                  >
-                    <IconEdit className="h-4 w-4" />
-                    <span>Edit profile</span>
-                  </button>
-
-                  <span
-                    className="chip chip-sm chip-track"
-                    style={{ "--track": trackOfRole(role) }}
-                  >
-                    <span className="dot dot-sm" />
-                    {labelOfRole(role)}
-                  </span>
-
-                  <span
-                    className="chip chip-sm chip-track"
-                    style={{
-                      "--track": trackOf(isVerified ? "approved" : "pending"),
-                    }}
-                  >
-                    <span className="dot dot-sm" />
-                    {isVerified ? "Email verified" : "Email not verified"}
-                  </span>
-                </div>
-              </div>
-            </section>
-
             {/* ----------------------------------------------- account details */}
             <section
               className="glass reveal flex flex-col p-4 sm:p-5"
@@ -544,7 +544,7 @@ function DeanProfile() {
               aria-labelledby="profile-details-heading"
             >
               <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 id="profile-details-heading" className="text-sm font-semibold text-ink">
+                <h2 id="profile-details-heading" className="h3 text-base text-ink">
                   Account details
                 </h2>
                 {loading && (
@@ -634,7 +634,7 @@ function DeanProfile() {
               style={{ "--i": 2 }}
               aria-labelledby="profile-actions-heading"
             >
-              <h2 id="profile-actions-heading" className="mb-3 text-sm font-semibold text-ink">
+              <h2 id="profile-actions-heading" className="h3 mb-3 text-base text-ink">
                 Quick actions
               </h2>
 

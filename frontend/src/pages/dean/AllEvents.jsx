@@ -4,8 +4,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { fetchCurrentUser, signOut } from "../../services/auth";
 import { apiJson, isAbortError } from "../../services/api";
 import DeanShell from "../../components/dean/DeanShell";
+import PageHero from "../../components/teacher/PageHero";
 import Modal from "../../components/teacher/Modal";
 import DateRangeModal from "../../components/common/DateRangeModal";
+import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
 import { trackOf } from "../../components/teacher/status";
 import {
   IconAlertTriangle,
@@ -370,6 +372,7 @@ function AllEvents() {
     downloadSingle,
     downloadBulk,
     canDownload,
+    reportPicker,
   } = useEventReportDownload();
 
   useEffect(() => {
@@ -423,7 +426,7 @@ function AllEvents() {
       setError("");
 
       const params = new URLSearchParams({
-        limit: "1000",
+        limit: "100",
       });
       if (query.date) params.set("event_date", query.date);
       if (query.startDate) params.set("start_date", query.startDate);
@@ -892,119 +895,123 @@ function AllEvents() {
           cards stay inside the viewport and the table — not the page — owns
           any horizontal overflow. */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 px-4 py-4 sm:px-5 lg:px-6 lg:py-6">
-
         {/* ================================================
-            COMMAND BAR
-            Title, search, program type, date and the status
-            chips — every control on one screen, no scrolling.
+            HEADER
+            The title, with search, program, submitter, date and
+            refresh beside it -- one row, no empty strip.
         ================================================ */}
-        <div className="glass shrink-0 overflow-hidden">
-          <div className="flex flex-wrap items-center gap-2.5 px-4 py-3.5 sm:px-5">
+        <div className="shrink-0">
+          <PageHero
+            compact
+            toolbar
+            title="All"
+            accent="Events"
+            actions={
+              <div className="flex flex-wrap items-center justify-end gap-2.5">
+                {/* Search */}
+                <div className="relative w-full sm:w-52 xl:w-56">
+                  <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-muted">
+                    <IconSearch className="h-4 w-4" />
+                  </span>
 
-            <div className="mr-auto min-w-0">
-              <p className="eyebrow">Dean Panel</p>
-              <h1 className="h3 mt-0.5 truncate text-ink">All Events</h1>
-            </div>
+                  <input
+                    id="eventSearch"
+                    type="text"
+                    value={searchDraft}
+                    onChange={(e) => setSearchDraft(e.target.value)}
+                    placeholder="Search events…"
+                    aria-label="Search events by name, venue, type or teacher"
+                    className="input pl-10 pr-9"
+                  />
 
-            {/* Search */}
-            <div className="relative w-full sm:w-60 xl:w-72">
-              <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5 text-muted">
-                <IconSearch className="h-4 w-4" />
-              </span>
+                  {searchDraft && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchDraft("")}
+                      aria-label="Clear search"
+                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted transition hover:text-ink"
+                    >
+                      <IconX className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
 
-              <input
-                id="eventSearch"
-                type="text"
-                value={searchDraft}
-                onChange={(e) => setSearchDraft(e.target.value)}
-                placeholder="Search name, venue, type or teacher…"
-                aria-label="Search events by name, venue, type or teacher"
-                className="input pl-10 pr-9"
-              />
+                {/* Program type + date share a line on narrow screens */}
+                <div className="flex w-full gap-2.5 sm:w-auto">
+                  <select
+                    value={typeFilter}
+                    onChange={(e) => setFilter("type", e.target.value)}
+                    aria-label="Filter by program type"
+                    className="input min-w-0 flex-1 sm:w-40 sm:flex-none"
+                  >
+                    <option value="">All programs</option>
+                    {eventTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
 
-              {searchDraft && (
+                  <select
+                    value={query.source}
+                    onChange={(e) => setFilter("source", e.target.value)}
+                    aria-label="Filter by who submitted the event"
+                    className="input min-w-0 flex-1 sm:w-40 sm:flex-none"
+                  >
+                    <option value="">All submitters</option>
+                    <option value="teacher">Teachers</option>
+                    <option value="event_manager">Event Managers</option>
+                  </select>
+
+                  <input
+                    id="eventDate"
+                    type="date"
+                    value={selectedDate}
+                    onChange={handleDateChange}
+                    aria-label="Filter by event date"
+                    className="input min-w-0 flex-1 sm:w-40 sm:flex-none"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setShowDateRangeModal(true)}
+                    className={`btn btn-sm shrink-0 ${
+                      startDate || endDate ? "btn-primary font-medium" : "btn-ghost"
+                    }`}
+                    title="Filter by date range"
+                    aria-label="Filter by date range"
+                  >
+                    <IconCalendar />
+                    <span>
+                      {startDate && endDate
+                        ? `${startDate} – ${endDate}`
+                        : startDate
+                          ? `From ${startDate}`
+                          : endDate
+                            ? `Until ${endDate}`
+                            : "Date Range"}
+                    </span>
+                  </button>
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => setSearchDraft("")}
-                  aria-label="Clear search"
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted transition hover:text-ink"
+                  onClick={() => loadEvents(selectedDate)}
+                  disabled={loading}
+                  className="icon-btn shrink-0"
+                  title="Refresh"
+                  aria-label="Refresh events"
                 >
-                  <IconX className="h-4 w-4" />
+                  {loading ? <span className="spin h-4 w-4" /> : <IconRefresh />}
                 </button>
-              )}
-            </div>
+              </div>
+            }
+          />
+        </div>
 
-            {/* Program type + date share a line on narrow screens */}
-            <div className="flex w-full gap-2.5 sm:w-auto">
-              <select
-                value={typeFilter}
-                onChange={(e) => setFilter("type", e.target.value)}
-                aria-label="Filter by program type"
-                className="input min-w-0 flex-1 sm:w-40 sm:flex-none"
-              >
-                <option value="">All programs</option>
-                {eventTypes.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={query.source}
-                onChange={(e) => setFilter("source", e.target.value)}
-                aria-label="Filter by who submitted the event"
-                className="input min-w-0 flex-1 sm:w-44 sm:flex-none"
-              >
-                <option value="">All submitters</option>
-                <option value="teacher">Teachers</option>
-                <option value="event_manager">Event Managers</option>
-              </select>
-
-              <input
-                id="eventDate"
-                type="date"
-                value={selectedDate}
-                onChange={handleDateChange}
-                aria-label="Filter by event date"
-                className="input min-w-0 flex-1 sm:w-42 sm:flex-none"
-              />
-
-              <button
-                type="button"
-                onClick={() => setShowDateRangeModal(true)}
-                className={`btn btn-sm shrink-0 ${
-                  startDate || endDate ? "btn-primary font-medium" : "btn-ghost"
-                }`}
-                title="Filter by date range"
-                aria-label="Filter by date range"
-              >
-                <IconCalendar />
-                <span>
-                  {startDate && endDate
-                    ? `${startDate} – ${endDate}`
-                    : startDate
-                      ? `From ${startDate}`
-                      : endDate
-                        ? `Until ${endDate}`
-                        : "Date Range"}
-                </span>
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => loadEvents(selectedDate)}
-              disabled={loading}
-              className="btn btn-ghost btn-sm shrink-0"
-            >
-              {loading ? <span className="spin h-4 w-4" /> : <IconRefresh />}
-              <span className="hidden sm:inline">Refresh</span>
-            </button>
-          </div>
-
-          {/* Status tabs + result count */}
-          <div className="flex flex-wrap items-center gap-1.5 border-t hairline bg-raised/35 px-4 py-2.5 sm:px-5">
+        {/* Status tabs and the result count */}
+        <div className="glass shrink-0 overflow-hidden">
+          <div className="flex flex-wrap items-center gap-1.5 px-4 py-2.5 sm:px-5">
             {DEAN_STATUS_FILTERS.map((tab) => (
               <button
                 key={tab.key}
@@ -1040,7 +1047,7 @@ function AllEvents() {
           </div>
         </div>
 
-        {/* Warning Banner if total > loaded events (1,000 cap reached) (Requirement 2) */}
+        {/* Ask the Dean to narrow filters once the API page limit is reached. */}
         {total > visibleEvents.length && (
           <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs sm:text-sm text-amber-800 dark:text-amber-200">
             <IconAlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
@@ -1579,6 +1586,9 @@ function AllEvents() {
           </div>
         )}
       </Modal>
+
+      {/* The row Report button asks which sections to include first. */}
+      <ReportCustomizationModal {...reportPicker} />
 
       <DateRangeModal
         open={showDateRangeModal}

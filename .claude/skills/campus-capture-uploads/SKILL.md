@@ -34,6 +34,20 @@ with the extension), and **magic bytes** (`_MAGIC_CHECKS`). The stored
 content-type is always the canonical one for the extension, never the client's.
 SVG and HTML are excluded by design — a browser could execute them.
 
+**Event photos are stored as WebP** (`app/services/photo_webp.py`), whoever
+uploads them (teacher or Event Manager) and whatever the format: JPG/PNG/still
+GIF are re-encoded (quality 82, transparency and colour profile kept, camera
+orientation applied, EXIF/GPS dropped); an animated GIF becomes an animated
+WebP; a `.webp` is stored as it came. The record's `file_name` and
+`content_type` say `.webp` / `image/webp`; `original_name` (and so the
+duplicate-name check) keeps what was uploaded. A file that passes the magic
+check but will not decode is refused with 400. Posted uploads convert before
+`save_upload`, and the byte budget counts the WebP size; direct uploads are
+converted in `direct_upload.convert_photo` after `finalize_object` — read back
+from R2, re-encoded, stored under a new `.webp` key, original deleted, session
+updated so a retried `/complete` is idempotent. Photos stored before this
+change were not converted.
+
 ## Streaming is not optional
 
 `stream_upload()` buffers to a `SpooledTemporaryFile` that rolls to disk past

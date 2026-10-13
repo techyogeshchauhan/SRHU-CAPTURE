@@ -32,6 +32,9 @@ function formatSize(bytes) {
  * `columns` is the Tailwind grid class for the thumbnails, so each page can
  * size the grid to the space it has.
  *
+ * `caption(item)` (optional) names where an item comes from -- the event,
+ * on the gallery's photo wall. It shows on the tile and heads the viewer.
+ *
  * Media links are signed and expire. `onLoadError` is called when an image
  * or video fails to load, so the page can fetch fresh links (see
  * useMediaRefresh); the new URLs then re-render the failed items.
@@ -42,6 +45,7 @@ export default function MediaGallery({
   columns = "grid-cols-2 sm:grid-cols-3",
   emptyText = "No photos or videos attached.",
   onLoadError,
+  caption,
 }) {
   const [openIndex, setOpenIndex] = useState(null);
   const thumbRefs = useRef([]);
@@ -102,7 +106,9 @@ export default function MediaGallery({
                       className="pointer-events-none h-full w-full bg-black object-cover"
                     />
                     <span className="absolute inset-0 flex items-center justify-center bg-black/25 transition group-hover:bg-black/40">
-                      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/90 text-ink shadow-lg transition group-hover:scale-110">
+                      {/* The disc is white in both themes, so its glyph stays
+                          dark: text-ink turns light in dark mode and vanished. */}
+                      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/90 text-black/80 shadow-lg transition group-hover:scale-110">
                         <IconPlay className="h-6 w-6" />
                       </span>
                     </span>
@@ -117,10 +123,19 @@ export default function MediaGallery({
                   />
                 )}
 
-                <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-                  {video ? <IconFilm className="h-3 w-3" /> : <IconImagePlus className="h-3 w-3" />}
-                  {video ? "Video" : "Image"}
-                </span>
+                {caption && (
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/75 to-transparent px-2 pb-1.5 pt-5 text-left text-[11px] font-medium text-white">
+                    {caption(item)}
+                  </span>
+                )}
+                {/* On a captioned wall nearly everything is a photo, so only
+                    videos are badged there. */}
+                {(video || !caption) && (
+                  <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                    {video ? <IconFilm className="h-3 w-3" /> : <IconImagePlus className="h-3 w-3" />}
+                    {video ? "Video" : "Image"}
+                  </span>
+                )}
               </button>
             </li>
           );
@@ -136,6 +151,7 @@ export default function MediaGallery({
             onClose={close}
             title={title}
             onLoadError={onLoadError}
+            caption={caption}
           />,
           document.body
         )}
@@ -143,7 +159,7 @@ export default function MediaGallery({
   );
 }
 
-function MediaViewer({ items, index, onIndex, onClose, title, onLoadError }) {
+function MediaViewer({ items, index, onIndex, onClose, title, onLoadError, caption }) {
   const item = items[index];
   const video = isVideo(item);
   const count = items.length;
@@ -163,8 +179,14 @@ function MediaViewer({ items, index, onIndex, onClose, title, onLoadError }) {
     document.body.style.overflow = "hidden";
     closeRef.current?.focus();
 
+    // Handled keys are marked with preventDefault, and heard in the capture
+    // phase, so a dialog underneath (the gallery's album) can tell that the
+    // viewer has already dealt with them and not close or page as well.
     const onKey = (event) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
       // Left/right would otherwise also scrub a focused video; the viewer
       // owns them so they always mean "previous / next item".
       else if (event.key === "ArrowRight" && count > 1) {
@@ -176,10 +198,10 @@ function MediaViewer({ items, index, onIndex, onClose, title, onLoadError }) {
       }
     };
 
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     return () => {
       document.body.style.overflow = previous;
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
     };
   }, [onClose, go, count]);
 
@@ -208,11 +230,12 @@ function MediaViewer({ items, index, onIndex, onClose, title, onLoadError }) {
       {/* ------------------------------------------------------ top bar */}
       <div className="flex items-center gap-3 px-3 py-2.5 sm:px-5">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold" title={item.file_name}>
-            {item.file_name || title}
+          <p className="truncate text-sm font-semibold" title={caption ? caption(item) : item.file_name}>
+            {caption ? caption(item) : item.file_name || title}
           </p>
-          <p className="text-xs text-white/60">
+          <p className="truncate text-xs text-white/60">
             {count > 1 && <span className="num">{index + 1} / {count} · </span>}
+            {caption && item.file_name ? `${item.file_name} · ` : ""}
             {meta}
           </p>
         </div>

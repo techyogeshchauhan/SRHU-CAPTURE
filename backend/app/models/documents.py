@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from bson import ObjectId
+
 from app.utils.serializers import utc_now
 
 
@@ -83,6 +85,24 @@ NOTIFICATION_TYPES = (
     # To every Dean, about the review queue
     "submitted",
     "resubmitted",
+    # Research portfolio (see RESEARCH_* below). To the faculty member and
+    # whoever entered the record, about the Dean's decision on it ...
+    "research_verified",
+    "research_changes",
+    "research_rejected",
+    "research_unverified",
+    # ... to the faculty member, when an Event Manager adds to their portfolio
+    "research_added",
+    # ... to whoever entered it, when the faculty member flags a mistake
+    "research_flagged",
+    # ... to the faculty member, when the Event Manager deletes their record
+    "research_removed",
+    # ... and to every Dean, about the verification queue
+    "research_submitted",
+    # Outcomes due (a patent past 18 months, a paper still in press ...)
+    "research_reminder",
+    # To every Dean: a showcase was sent (or sent again)
+    "research_showcase",
 )
 
 # The teacher-visible audit trail, embedded on the event as `history`.
@@ -399,6 +419,144 @@ def new_event_type_document(
         "key": name.casefold(),
         "is_default": is_default,
         "created_by": created_by,
+        "created_at": utc_now(),
+    }
+
+
+# ======================================================================
+# Research portfolio
+#
+# A record of one piece of research -- a paper, patent, book, or achievement -- that
+# belongs to a faculty member (`faculty_id`, a teacher account), whoever typed
+# it in. An Event Manager enters records for any teacher; a teacher may enter
+# their own. Every record is verified by the Dean, whoever entered it.
+#
+# Two axes, never merged (the same rule as an event's status vs archived_at):
+#   outcome_status       where the research itself stands -- a patent that is
+#                        filed, published or granted. Per category, see
+#                        app/services/research_categories.py.
+#   verification_status  where the *record* stands with the Dean.
+# ======================================================================
+
+RESEARCH_VERIFICATION_STATUSES = (
+    "draft",               # being prepared; invisible to the Dean
+    "submitted",           # in the Dean's verification queue
+    "verified",            # accepted: checked by the Dean, or recorded by the
+                           # Event Manager (verified_by.role says which)
+    "changes_requested",   # fixable: the Dean asked for a correction
+    "rejected",            # not a valid record (duplicate, not research ...)
+)
+
+# Statuses the record can be submitted (or resubmitted) from.
+RESEARCH_SUBMITTABLE_STATUSES = ("draft", "changes_requested", "rejected")
+
+# Statuses in which the record may be deleted. A record the Dean is looking at
+# or has verified is part of the portfolio and is not silently removed.
+RESEARCH_DELETABLE_STATUSES = ("draft", "rejected")
+
+# History actions on a research record, on top of the shared ones.
+RESEARCH_HISTORY_ACTIONS = (
+    "created",
+    "updated",
+    "submitted",
+    "resubmitted",
+    "verified",
+    "changes_requested",
+    "rejected",
+    "unverified",
+    "reverification",       # a verified record was edited, so it went back
+    "recorded",             # submitted by the Event Manager: accepted at once
+    "evidence_added",
+    "evidence_removed",
+    "correction_flagged",
+)
+
+
+def academic_year_of(iso_date: str | None) -> str | None:
+    """"2026-08-14" -> "2026-27"; the academic year runs July to June.
+
+    Read off the string, never through a Date, so no timezone can move a
+    record dated 1 July into the year before.
+    """
+    if not iso_date or len(iso_date) < 7:
+        return None
+    try:
+        year, month = int(iso_date[:4]), int(iso_date[5:7])
+    except ValueError:
+        return None
+    start = year if month >= 7 else year - 1
+    return f"{start}-{(start + 1) % 100:02d}"
+
+
+def new_research_record_document(
+    *,
+    faculty_id: str,
+    created_by: dict,
+    category: str,
+    title: str,
+    record_date: str | None,
+    outcome_status: str,
+    details: dict,
+    abstract: str | None = None,
+    link: str | None = None,
+) -> dict[str, Any]:
+    now = utc_now()
+    return {
+        "faculty_id": faculty_id,
+        # Who typed it in, copied rather than looked up, for the same reason
+        # as history entries: the Dean is told "entered by the Event Manager"
+        # even if that account is later renamed or removed.
+        "created_by": created_by.get("id"),
+        "created_by_name": created_by.get("name") or created_by.get("email"),
+        "created_by_role": created_by.get("role"),
+        "category": category,
+        "title": title,
+        # The date that places the record in time: publication, filing,
+        # presentation or start date, depending on the category.
+        "record_date": record_date,
+        "academic_year": academic_year_of(record_date),
+        "outcome_status": outcome_status,
+        "details": details,
+        "abstract": abstract,
+        "link": link,
+        # Up to a handful of files, embedded: always read with the record.
+        "evidence": [],
+        "verification_status": "draft",
+        # The Dean's latest remark (a request for changes or a rejection).
+        "dean_remarks": None,
+        "submitted_at": None,
+        "verified_at": None,
+        "verified_by": None,
+        # What the record said when it was last verified, so a re-verification
+        # can show the Dean exactly what changed.
+        "verified_snapshot": None,
+        "history": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def new_research_evidence(
+    *,
+    tag: str,
+    file_name: str,
+    content_type: str,
+    file_size: int,
+    stored: dict,
+    uploaded_by: dict,
+) -> dict[str, Any]:
+    return {
+        "id": str(ObjectId()),
+        "tag": tag,
+        "file_name": file_name,
+        "content_type": content_type,
+        "file_size": file_size,
+        "storage": stored["storage"],
+        "object_key": stored["object_key"],
+        "file_id": stored["file_id"],
+        "url": stored["url"],
+        "uploaded_by": uploaded_by.get("id"),
+        "uploaded_by_name": uploaded_by.get("name") or uploaded_by.get("email"),
         "created_at": utc_now(),
     }
 

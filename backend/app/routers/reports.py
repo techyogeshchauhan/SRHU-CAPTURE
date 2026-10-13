@@ -55,6 +55,10 @@ class DeanMultiReportRequest(BaseModel):
     customization: ReportCustomizationOptions | dict | None = None
 
 
+class ReportAvailabilityRequest(BaseModel):
+    event_ids: list[str]
+
+
 # ============================================================
 # HELPERS
 # ============================================================
@@ -601,6 +605,94 @@ def build_dean_report(
     return build_managed_report_pdf(
         [entry], links_valid_until=links_valid_until, subject="Official event report", customization=opts
     )
+
+
+# ============================================================
+# WHAT A REPORT CAN CONTAIN
+#
+# The Dean picks a report's sections before every download. A section the
+# event has nothing for -- no photos, no notices, no description -- is
+# offered disabled, so it is worked out here by the PDF builder's own rules
+# (build_dean_report_entry, report_attachment_rows) rather than guessed in
+# the browser from a list row that carries no files.
+# ============================================================
+
+# The consolidated report's own ceiling (multi_event_dean_report).
+MAX_REPORT_EVENTS = 50
+
+
+def report_availability(event: dict) -> dict:
+    """What each report section would have to show for one event."""
+    media = get_event_media(event["id"])
+    documents = get_event_documents(event["id"])
+
+    item = with_legacy_metadata(dict(event))
+    description, meta = split_description(item.get("description"))
+    participants = str(meta.get("expectedParticipants") or "").strip()
+
+    photos = sum(1 for row in media if str(row.get("media_type") or "").lower() == "image")
+    videos = sum(1 for row in media if str(row.get("media_type") or "").lower() == "video")
+    # A document is a notice unless it was uploaded as a report, exactly as
+    # the PDF splits them; attachments are the report documents plus a link
+    # for every photo and video.
+    notices = sum(1 for row in documents if row.get("category") != "report")
+    report_documents = len(documents) - notices
+
+    return {
+        "photos": photos,
+        "videos": videos,
+        "notices": notices,
+        "report_documents": report_documents,
+        "attachments": report_documents + len(media),
+        "has_description": bool((description or "").strip()),
+        "has_other_info": bool(participants and participants != "0")
+        or bool(str(item.get("social_network_url") or "").strip()),
+    }
+
+
+@router.post("/dean/reports/availability")
+def dean_report_availability(
+    payload: ReportAvailabilityRequest,
+    authorization: str | None = Header(default=None),
+):
+    """Per event, and combined, what a report on these events can include.
+
+    A section is worth offering for several events when any one of them has
+    something for it, so the combined counts are sums and the flags are "any".
+    Events the Dean cannot see (drafts, archived, unknown ids) are left out,
+    as the report itself would leave them out.
+    """
+    user = get_current_user(authorization)
+    check_event_viewer(user)
+
+    wanted: list[str] = []
+    for value in payload.event_ids:
+        if value and str(value) not in wanted:
+            wanted.append(str(value))
+    if not wanted:
+        raise HTTPException(status_code=400, detail="No events selected for report generation.")
+    if len(wanted) > MAX_REPORT_EVENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A consolidated report can cover at most {MAX_REPORT_EVENTS} events.",
+        )
+
+    per_event: dict[str, dict] = {}
+    for event_id in wanted:
+        try:
+            event = get_event(event_id)
+        except HTTPException:
+            continue
+        per_event[event["id"]] = report_availability(event)
+
+    counts = ("photos", "videos", "notices", "report_documents", "attachments")
+    flags = ("has_description", "has_other_info")
+    combined = {
+        **{key: sum(item[key] for item in per_event.values()) for key in counts},
+        **{key: any(item[key] for item in per_event.values()) for key in flags},
+    }
+
+    return {"success": True, "events": per_event, "combined": combined}
 
 
 @router.post("/dean/reports")

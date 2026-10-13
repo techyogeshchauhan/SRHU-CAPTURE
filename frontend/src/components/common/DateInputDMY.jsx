@@ -17,6 +17,10 @@ import { dmyToIso, isoToDmy, maskDmy } from "../../utils/dates";
  *
  * `onChange` receives an event-shaped `{ target: { name, value } }`, so it
  * drops in where a native input's handler was.
+ *
+ * `onTextChange(text)` (optional) receives what is in the box as typed, so a
+ * form can tell "left blank" from "typed something that is not a date" --
+ * both of which report "" through onChange.
  */
 export default function DateInputDMY({
   id,
@@ -29,6 +33,7 @@ export default function DateInputDMY({
   autoFocus = false,
   ariaInvalid,
   className = "input min-h-10 py-2",
+  onTextChange,
 }) {
   const [text, setText] = useState(() => isoToDmy(value));
   const [lastValue, setLastValue] = useState(value);
@@ -47,6 +52,7 @@ export default function DateInputDMY({
   const handleType = (event) => {
     const next = maskDmy(event.target.value);
     setText(next);
+    onTextChange?.(next);
     const iso = dmyToIso(next);
     if (iso !== value) report(iso);
   };
@@ -54,6 +60,7 @@ export default function DateInputDMY({
   const handlePick = (event) => {
     const iso = event.target.value;
     setText(isoToDmy(iso));
+    onTextChange?.(isoToDmy(iso));
     report(iso);
   };
 

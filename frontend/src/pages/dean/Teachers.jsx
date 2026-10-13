@@ -204,7 +204,9 @@ const ACTIONS = {
       `${name} will be signed out, unable to sign in, and moved to the Removed tab. ` +
       (t.event_count
         ? `Their ${t.event_count} event${t.event_count === 1 ? "" : "s"}, uploads and reports are all kept. `
-        : "Nothing is deleted. ") +
+        : t.research_count
+          ? "Their research records are all kept. "
+          : "Nothing is deleted. ") +
       "You can restore them at any time.",
     confirm: "Remove teacher",
     busy: "Removing…",
@@ -559,12 +561,11 @@ export default function Teachers() {
       onLogout={handleLogout}
       railNote="Teachers are invited with a one-time link to set their own password. Passwords are never sent or shown."
     >
-      <div className="mx-auto w-full max-w-wrap px-5 py-8 sm:px-8">
+      <div className="mx-auto w-full max-w-wrap px-5 py-6 sm:px-8">
         <PageHero
-          eyebrow="Dean Panel"
+          compact
           title="Teacher"
           accent="Management"
-          subtitle="Every Teacher account at Swami Rama Himalayan University. Invite teachers, reset passwords, edit profiles, manage access and promote teachers to Dean."
           actions={
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <button type="button" onClick={refreshAll} disabled={loading} className="btn btn-ghost">
@@ -584,8 +585,9 @@ export default function Teachers() {
         />
 
         {/* ------------------------------------------------ overview */}
-        <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatCard
+            compact
             label="All teachers"
             value={counts.all ?? 0}
             Icon={IconUsers}
@@ -595,6 +597,7 @@ export default function Teachers() {
             index={0}
           />
           <StatCard
+            compact
             label="Active"
             value={counts.active ?? 0}
             Icon={IconCheckCircle}
@@ -604,6 +607,7 @@ export default function Teachers() {
             index={1}
           />
           <StatCard
+            compact
             label="Inactive"
             value={counts.inactive ?? 0}
             Icon={IconXCircle}
@@ -613,6 +617,7 @@ export default function Teachers() {
             index={2}
           />
           <StatCard
+            compact
             label="Never signed in"
             value={counts.pending ?? 0}
             Icon={IconClock}
@@ -803,10 +808,7 @@ export default function Teachers() {
         {/* ------------------------------------------------ results */}
         <section className="glass reveal mt-4 overflow-hidden" style={{ "--i": 2 }}>
           <div className="flex items-center justify-between gap-3 border-b hairline px-5 py-4">
-            <div>
-              <p className="eyebrow">Role · Teacher</p>
-              <h2 className="h3 text-ink">{STATUS_TABS.find((t) => t.key === statusFilter).label}</h2>
-            </div>
+            <h2 className="h3 text-base text-ink">{STATUS_TABS.find((t) => t.key === statusFilter).label}</h2>
             {!loading && (
               <p className="num text-sm text-muted">
                 <span className="font-semibold text-ink">
@@ -1446,13 +1448,19 @@ function RowActions({ teacher, emailConfigured, onAct, onEdit }) {
   const active = isActive(teacher);
   const btn = "btn btn-ghost btn-xs btn-icon";
   const events = teacher.event_count || 0;
+  const research = teacher.research_count || 0;
+  // Deleting would erase their events or orphan their research records.
+  const held = [
+    events > 0 && `${events} event${events === 1 ? "" : "s"}`,
+    research > 0 && `${research} research record${research === 1 ? "" : "s"}`,
+  ].filter(Boolean);
   const deleteItem = {
     key: "delete",
     label: "Delete permanently",
     Icon: IconTrash,
     danger: true,
-    disabled: events > 0,
-    hint: events > 0 ? `Has ${events} event${events === 1 ? "" : "s"}. Remove the teacher instead.` : null,
+    disabled: held.length > 0,
+    hint: held.length ? `Has ${held.join(" and ")}. Remove the teacher instead.` : null,
   };
 
   if (teacher.removed_at) {
@@ -2043,10 +2051,7 @@ function ActivityPanel({ refreshKey }) {
       >
         <span className="flex items-center gap-3">
           <span className="icon-tile h-9 w-9 rounded-lg [&>svg]:h-4 [&>svg]:w-4"><IconActivity /></span>
-          <span>
-            <span className="eyebrow block">Teacher management</span>
-            <span className="h3 block text-ink">Recent activity</span>
-          </span>
+          <span className="h3 block text-base text-ink">Recent activity</span>
         </span>
         <span className="text-xs font-semibold text-accent">{open ? "Hide" : "Show"}</span>
       </button>

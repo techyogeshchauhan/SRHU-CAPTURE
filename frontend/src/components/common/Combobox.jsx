@@ -28,6 +28,10 @@ function Combobox({
   // Optional leading glyph, for forms whose other inputs carry one (the
   // registration form). Omitted, the input keeps its usual padding.
   icon,
+  // false when the server already searched (the research form's teacher
+  // picker matches on email and department too, which a name filter here
+  // would throw away).
+  filterLocally = true,
 }) {
   const generatedId = useId();
   const inputId = id || generatedId;
@@ -38,7 +42,7 @@ function Combobox({
   const wrapperRef = useRef(null);
 
   const needle = (value || "").trim().toLowerCase();
-  const matches = needle
+  const matches = needle && filterLocally
     ? options.filter((option) => option.name.toLowerCase().includes(needle))
     : options;
 
