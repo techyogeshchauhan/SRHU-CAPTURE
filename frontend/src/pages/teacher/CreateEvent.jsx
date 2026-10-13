@@ -1759,7 +1759,7 @@ function CreateEvent() {
                       : null
                   }
                   usedBytes={photoBytesUsed}
-                  maxSizeLabel={`JPG, PNG, WebP or GIF up to ${formatMb(uploadLimits.max_photo_size_mb * 1024 * 1024)} each${uploadLimits.max_photo_total_mb ? ` · ${formatMb(uploadLimits.max_photo_total_mb * 1024 * 1024)} total` : ""}`}
+                  maxSizeLabel={`JPG, JPEG, PNG, WebP or GIF up to ${formatMb(uploadLimits.max_photo_size_mb * 1024 * 1024)} each${uploadLimits.max_photo_total_mb ? ` · ${formatMb(uploadLimits.max_photo_total_mb * 1024 * 1024)} total` : ""}`}
                   emptyLabel="Drag photos here"
                   hint="Posters, banners, and photographs of the event."
                   disabled={busy}
