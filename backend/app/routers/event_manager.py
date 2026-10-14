@@ -9,7 +9,7 @@ teacher's submission goes to the Dean as ``pending``, an Event Manager's is
 stays editable.
 
 On top of that, reports: one event, or several in one PDF, generated directly,
-with up to four chosen photos and a download link for every file.
+with all chosen photos and a download link for every file.
 
 The events live in their own collections (`managed_events`,
 `managed_event_media`, `managed_event_documents`), so the teacher, Dean and

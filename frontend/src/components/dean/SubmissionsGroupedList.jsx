@@ -766,10 +766,14 @@ function SubmissionRow({
     event.actual_participants ??
     event.number_of_participants ??
     null;
-  const participantCount =
-    actualParticipantCount ?? event.expected_participants ?? fields.expectedParticipants;
+  const participantCount = [
+    actualParticipantCount,
+    event.expected_participants,
+    fields.expectedParticipants,
+  ].find((value) => value != null && String(value).trim() !== "");
   const participantLabel =
     actualParticipantCount == null ? "Expected participants" : "Participants";
+  const isRecorded = String(event.status || "").toLowerCase() === "recorded";
   const dateFormatted = formatRowDate(
     event.event_date || event.start_date || event.created_at
   );
@@ -830,10 +834,19 @@ function SubmissionRow({
           </div>
         </div>
 
-        {/* 4. Short status text in muted/accent colors */}
-        <div className="shrink-0">
-          <StatusChip status={event.status} size="sm" />
-        </div>
+        {/* Participant total from the API field or the legacy event metadata. */}
+        {participantCount != null && participantCount !== "" && (
+          <div className="shrink-0 inline-flex min-h-[2rem] items-center px-3 py-[0.35rem] font-display text-[0.78rem] font-medium tracking-[0.01em] text-ink whitespace-nowrap">
+            Participants: {participantCount}
+          </div>
+        )}
+
+        {/* Recorded is omitted from the row; other event statuses remain visible. */}
+        {!isRecorded && (
+          <div className="shrink-0">
+            <StatusChip status={event.status} size="sm" />
+          </div>
+        )}
 
         {/* 5. Right side action buttons */}
         {renderRowActions ? (

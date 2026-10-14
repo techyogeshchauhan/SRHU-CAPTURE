@@ -351,9 +351,28 @@ export default function UploadPanel({
 
               <div className="flex items-center gap-3">
                 {reportSelection && (
-                  <span className="text-xs text-muted">
-                    <span className="font-semibold text-accent">{reportSelection.ids.length}</span> in report
-                  </span>
+                  <>
+                    <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted">
+                      <input
+                        type="checkbox"
+                        checked={
+                          items.length > 0 && items.every((item) => reportSelection.ids.includes(item.id))
+                        }
+                        disabled={disabled || reportSelection.busy}
+                        onChange={(event) =>
+                          event.target.checked
+                            ? reportSelection.onSelectAll?.()
+                            : reportSelection.onClearAll?.()
+                        }
+                        aria-label="Select all photos for the report"
+                        className="h-3.5 w-3.5 rounded border-line text-accent focus:ring-accent"
+                      />
+                      Select all for report
+                    </label>
+                    <span className="text-xs text-muted">
+                      <span className="font-semibold text-accent">{reportSelection.ids.length}</span> in report
+                    </span>
+                  </>
                 )}
                 <button
                   type="button"

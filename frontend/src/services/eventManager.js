@@ -4,7 +4,7 @@
  * The Event Manager uses the Teacher panel's screens against its own event
  * API (see components/teacher/panel.jsx); what it adds is here: reports are
  * generated directly -- for one event or for a selection of several -- and
- * each event's report shows up to four chosen photos.
+ * each event's report shows every chosen photo.
  */
 import { apiFetch, apiJson, errorFromResponse } from "./api";
 import { fileNameFromResponse, reportFileName } from "../utils/fileNames";

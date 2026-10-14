@@ -4,7 +4,6 @@ import { fetchCurrentUser, signOut } from "../../services/auth";
 import { apiFetch, apiJson, errorFromResponse } from "../../services/api";
 import { fileNameFromResponse, reportFileName } from "../../utils/fileNames";
 import useMediaRefresh from "../../components/common/useMediaRefresh";
-import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
 import { submitterOf } from "../../components/common/submitter";
 import DeanShell from "../../components/dean/DeanShell";
 import Modal from "../../components/teacher/Modal";
@@ -52,6 +51,7 @@ import {
 } from "../../utils/constants";
 import { formatDateRange, formatTime12h } from "../../utils/dates";
 import { readEventFields } from "../../utils/eventFields";
+import { decodeEventMetadata } from "../../utils/draftStorage";
 
 function EventDetails() {
   const { eventId } = useParams();
@@ -71,7 +71,6 @@ function EventDetails() {
   const [reportLoading, setReportLoading] = useState(false);
   const [reportGenerated, setReportGenerated] = useState(false);
   const [generatedAt, setGeneratedAt] = useState(null);
-  const [showReportModal, setShowReportModal] = useState(false);
 
   const [socialNetworkUrl, setSocialNetworkUrl] = useState("");
   const [savingSocialLink, setSavingSocialLink] = useState(false);
@@ -472,21 +471,10 @@ function EventDetails() {
   // GENERATE REPORT
   // ============================================================
 
-  const handleOpenReportModal = () => {
-    if (!event) return;
-    if (getStatusBucket(event.status) !== "approved") {
-      setError("Report can only be generated for an approved event.");
-      return;
-    }
-    setShowReportModal(true);
-  };
-
-  // The PDF for the chosen sections; with none given, the server uses the
-  // sections the report was last generated with.
-  const savePdf = async (customization = null) => {
+  // The server builds the PDF from the latest event, media and document data.
+  const savePdf = async () => {
     const response = await apiFetch(`/dean/events/${event.id}/report/download`, {
-      method: customization ? "POST" : "GET",
-      body: customization || undefined,
+      method: "GET",
     });
 
     if (!response.ok) {
@@ -506,51 +494,24 @@ function EventDetails() {
     window.URL.revokeObjectURL(downloadUrl);
   };
 
-  // Download: the report as last generated, without asking again.
+  // Generate and download the current report in one action.
   const handleDownloadReport = async () => {
     if (!event) return;
     try {
       setReportLoading(true);
       setError("");
       setSuccess("");
-      await savePdf();
-      setSuccess("Report downloaded successfully.");
-    } catch (err) {
-      handleApiError(err, "Failed to download report", "Download report error");
-    } finally {
-      setReportLoading(false);
-    }
-  };
 
-  const handleGenerateReport = async (customization = null) => {
-    if (!event) return;
-
-    // The whole approved group -- approved, in progress, completed -- matches
-    // the backend's is_approved() and the report panel's own visibility.
-    if (getStatusBucket(event.status) !== "approved") {
-      setError("Report can only be generated for an approved event.");
-      return;
-    }
-
-    try {
-      setReportLoading(true);
-      setError("");
-      setSuccess("");
-
-      const data = await apiJson(`/dean/events/${event.id}/generate-report`, {
+      const generated = await apiJson(`/dean/events/${event.id}/generate-report`, {
         method: "POST",
-        body: customization || undefined,
       });
 
       setReportGenerated(true);
-      setGeneratedAt(data?.generated_at || null);
-
-      await savePdf(customization);
-
-      setShowReportModal(false);
+      setGeneratedAt(generated?.generated_at || null);
+      await savePdf();
       setSuccess("Report generated and downloaded successfully.");
     } catch (err) {
-      handleApiError(err, "Failed to generate report", "Generate report error");
+      handleApiError(err, "Failed to generate and download report", "Generate and download report error");
     } finally {
       setReportLoading(false);
     }
@@ -624,6 +585,8 @@ function EventDetails() {
   // readEventFields prefers the columns and falls back to the blob, so an
   // event created before the promotion still renders in full.
   const meta = readEventFields(event);
+  const rawMetadata = decodeEventMetadata(event.description || "").meta;
+  const enteredDepartment = event.department?.trim() || rawMetadata.department?.trim() || "";
   const cleanDescription = meta.description;
 
   // Bucket-wide, like getApproveLabel: a revoked event is a refused event,
@@ -677,23 +640,13 @@ function EventDetails() {
       ? `${formatTime12h(meta.startTime) || "?"}${
           meta.endTime ? ` – ${formatTime12h(meta.endTime)}` : ""
         }`
-      : "Not set";
+      : "";
 
-  // The hero's four facts: what the Dean checks first, in the order they ask.
-  const facts = [
-    {
-      label: event.end_date ? "Dates" : "Date",
-      value: formatDateRange(event.event_date, event.end_date),
-      Icon: IconCalendar,
-    },
-    { label: "Venue", value: event.location || "Not set", Icon: IconMapPin },
-    { label: "Time", value: timeRange, Icon: IconClock },
-    {
-      label: "Organizer",
-      value: meta.organizer || "Not provided",
-      Icon: IconUser,
-    },
-  ];
+  // Keep the event's entered scheduling and organizer information alongside
+  // the rest of its coordination details.
+  const dateValue = event.event_date
+    ? formatDateRange(event.event_date, event.end_date)
+    : "";
 
   // A teacher submits an event for approval; an Event Manager records one.
   const submitter = submitterOf(event);
@@ -703,22 +656,30 @@ function EventDetails() {
 
   const details = [
     {
+      label: event.end_date ? "Dates" : "Date",
+      value: dateValue,
+      Icon: IconCalendar,
+    },
+    { label: "Venue", value: event.location?.trim() || "", Icon: IconMapPin },
+    { label: "Time", value: timeRange, Icon: IconClock },
+    { label: "Organizer", value: meta.organizer?.trim() || "", Icon: IconUser },
+    {
       label: submitter.verb,
       value: `${submitter.name} (${submitter.role})${event.teacher_email && event.teacher_email !== submitter.name ? ` · ${event.teacher_email}` : ""}`,
       Icon: IconUser,
     },
     {
       label: "Department",
-      value: meta.department || "Not provided",
+      value: enteredDepartment,
       Icon: IconBuilding,
     },
     {
       label: "Expected participants",
-      value: meta.expectedParticipants || "Not provided",
+      value: meta.expectedParticipants || "",
       Icon: IconUsers,
     },
-    { label: "Contact", value: meta.contactInfo || "Not provided", Icon: IconPhone },
-  ];
+    { label: "Contact", value: meta.contactInfo || "", Icon: IconPhone },
+  ].filter((item) => item.value);
 
   return (
     <DeanShell active="events" profile={deanProfile} onLogout={handleLogout}>
@@ -787,25 +748,7 @@ function EventDetails() {
               </button>
             </div>
           }
-        >
-          <dl className="grid gap-4 border-t hairline pt-5 sm:grid-cols-2 lg:grid-cols-4">
-            {facts.map((fact) => (
-              <div key={fact.label} className="flex items-center gap-3">
-                <span className="icon-tile h-9 w-9 rounded-xl">
-                  <fact.Icon className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <dt className="text-[11px] font-semibold uppercase tracking-[.12em] text-muted">
-                    {fact.label}
-                  </dt>
-                  <dd className="truncate text-sm font-medium text-ink" title={fact.value}>
-                    {fact.value}
-                  </dd>
-                </div>
-              </div>
-            ))}
-          </dl>
-        </PageHero>
+        />
 
         {/* ====================================================
             TWO-COLUMN BODY
@@ -831,23 +774,23 @@ function EventDetails() {
                     </span>
                     <div className="min-w-0">
                       <dt className="text-xs font-medium text-muted">{item.label}</dt>
-                      <dd className="mt-0.5 wrap-break-word text-sm font-semibold text-ink">
+                      <dd className="mt-0.5 whitespace-normal break-words text-sm font-semibold text-ink">
                         {item.value}
                       </dd>
                     </div>
                   </div>
                 ))}
 
-                <div className="flex items-start gap-3 sm:col-span-2 lg:col-span-3">
-                  <span className="icon-tile h-9 w-9 rounded-xl">
-                    <IconTag className="h-4 w-4" />
-                  </span>
-                  <div className="min-w-0">
-                    <dt className="text-xs font-medium text-muted">
-                      Social network link
-                    </dt>
-                    <dd className="mt-0.5">
-                      {event.social_network_url ? (
+                {event.social_network_url?.trim() && (
+                  <div className="flex items-start gap-3 sm:col-span-2 lg:col-span-3">
+                    <span className="icon-tile h-9 w-9 rounded-xl">
+                      <IconTag className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <dt className="text-xs font-medium text-muted">
+                        Social network link
+                      </dt>
+                      <dd className="mt-0.5">
                         <a
                           href={event.social_network_url}
                           target="_blank"
@@ -856,53 +799,52 @@ function EventDetails() {
                         >
                           {event.social_network_url}
                         </a>
-                      ) : (
-                        <span className="text-sm text-muted italic">Not provided</span>
-                      )}
-                    </dd>
+                      </dd>
+                    </div>
                   </div>
-                </div>
+                )}
               </dl>
             </section>
 
             {/* ------------------------------------------------ description */}
-            <section className="glass overflow-hidden">
-              <div className="border-b hairline px-6 py-5">
-                <p className="eyebrow">Proposal</p>
-                <h2 className="h3 mt-1 text-ink">Event description</h2>
-              </div>
-              <p className="prose-muted whitespace-pre-line px-6 py-5 text-sm">
-                {cleanDescription || "No description provided."}
-              </p>
-            </section>
+            {cleanDescription?.trim() && (
+              <section className="glass overflow-hidden">
+                <div className="border-b hairline px-6 py-5">
+                  <p className="eyebrow">Proposal</p>
+                  <h2 className="h3 mt-1 text-ink">Event description</h2>
+                </div>
+                <p className="prose-muted whitespace-pre-line px-6 py-5 text-sm">
+                  {cleanDescription}
+                </p>
+              </section>
+            )}
 
             {/* ------------------------------------------ photos and videos */}
             {/* Two dedicated cards showing every item. They used to share one
                 height-capped tab, where videos hid below a few photos. */}
-            <EventMediaSections
-              items={media}
-              eventName={event.event_name || "Event"}
-              onLoadError={refreshMediaLinks}
-            />
+            {media.length > 0 && (
+              <EventMediaSections
+                items={media}
+                eventName={event.event_name || "Event"}
+                onLoadError={refreshMediaLinks}
+                hideEmptySections
+              />
+            )}
 
             {/* ---------------------------------------------------- documents */}
-            <section className="glass overflow-hidden">
-              <div className="flex items-center justify-between gap-3 border-b hairline px-6 py-4">
-                <div className="flex items-center gap-2.5">
-                  <span className="icon-tile h-9 w-9 rounded-lg">
-                    <IconFileText className="h-4 w-4" />
-                  </span>
-                  <h2 className="h3 text-base text-ink">Documents</h2>
+            {documents.length > 0 && (
+              <section className="glass overflow-hidden">
+                <div className="flex items-center justify-between gap-3 border-b hairline px-6 py-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="icon-tile h-9 w-9 rounded-lg">
+                      <IconFileText className="h-4 w-4" />
+                    </span>
+                    <h2 className="h3 text-base text-ink">Documents</h2>
+                  </div>
+                  <span className="chip chip-sm chip-solid num">{documents.length}</span>
                 </div>
-                <span className="chip chip-sm chip-solid num">{documents.length}</span>
-              </div>
 
-              <div className="p-5">
-                {documents.length === 0 ? (
-                  <p className="prose-muted rounded-xl border border-dashed border-line/20 p-6 text-center text-sm">
-                    No supporting documents uploaded.
-                  </p>
-                ) : (
+                <div className="p-5">
                   <ul className="max-h-85 space-y-2.5 overflow-y-auto">
                     {documents.map((document) => (
                       <li
@@ -938,9 +880,9 @@ function EventDetails() {
                       </li>
                     ))}
                   </ul>
-                )}
-              </div>
-            </section>
+                </div>
+              </section>
+            )}
 
             {/* ---- Report (post-approval only) ---- */}
             {/* Reports assert a live approval, and the server refuses to
@@ -1002,7 +944,7 @@ function EventDetails() {
 
                       {!socialNetworkUrl.trim() && (
                         <p className="prose-muted text-xs">
-                          Added to the generated report when present. The report
+                          Added to the report when present. The report
                           can be generated without it.
                         </p>
                       )}
@@ -1011,30 +953,12 @@ function EventDetails() {
                     <div className="flex flex-wrap gap-2.5 border-t hairline pt-5">
                       <button
                         type="button"
-                        onClick={handleOpenReportModal}
+                        onClick={handleDownloadReport}
                         disabled={reportLoading || !canReport}
                         className="btn btn-brand btn-sm flex-1"
                       >
-                        {reportLoading ? (
-                          <span className="spin h-3.5 w-3.5" />
-                        ) : (
-                          <IconRefresh />
-                        )}
-                        {reportLoading
-                          ? "Processing…"
-                          : reportGenerated
-                          ? "Customize & Regenerate"
-                          : "Generate Report"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleDownloadReport}
-                        disabled={reportLoading || !reportGenerated || !canReport}
-                        className="btn btn-ghost btn-sm flex-1"
-                      >
-                        <IconDownload />
-                        Download
+                        {reportLoading ? <span className="spin h-3.5 w-3.5" /> : <IconDownload />}
+                        {reportLoading ? "Generating and downloading..." : "Download Report"}
                       </button>
                     </div>
 
@@ -1561,17 +1485,6 @@ function EventDetails() {
         </div>
       </Modal>
 
-      <ReportCustomizationModal
-        open={showReportModal}
-        onClose={() => setShowReportModal(false)}
-        onGenerate={handleGenerateReport}
-        generating={reportLoading}
-        eventName={event?.event_name}
-        photoCount={media?.filter((m) => m.media_type === "image").length}
-        documentCount={documents?.length}
-        noticeCount={documents?.filter((d) => d.category !== "report").length}
-        attachmentCount={(documents?.filter((d) => d.category === "report").length || 0) + (media?.length || 0)}
-      />
     </DeanShell>
   );
 }

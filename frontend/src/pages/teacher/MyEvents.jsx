@@ -62,7 +62,7 @@ const STATUS_TABS = [
 const DIRECT_STATUS_TABS = [
   { key: "all", label: "All" },
   { key: "draft", label: "Draft" },
-  { key: "recorded", label: "Recorded" },
+  { key: "recorded", label: "Submitted" },
 ];
 
 const DATE_FILTERS = [
@@ -299,6 +299,17 @@ function MyEvents() {
     dateFilter !== "all_time" ||
     customFromDate !== "" ||
     customToDate !== "";
+
+  const openEventRow = (event, item) => {
+    if (event.target.closest("a, button, input, select, textarea, [role='button']")) return;
+
+    if (item.isDraft) {
+      navigate(`${panel.base}/create-event?draftId=${item.id}`, { state: originState });
+      return;
+    }
+
+    navigate(`${panel.base}/events/${item.id}`, { state: originState });
+  };
 
   // Duplicate Event
   const handleDuplicate = (targetEvent) => {
@@ -925,8 +936,9 @@ function MyEvents() {
                   return (
                     <li
                       key={item.id}
+                      onClick={(event) => openEventRow(event, item)}
                       style={isRejected ? { "--track": trackOf(item.status) } : undefined}
-                      className={`px-4 py-3.5 ${isRejected ? "bg-[color-mix(in_srgb,var(--track)_6%,transparent)]" : ""}`}
+                      className={`px-4 py-3.5 ${item.isDraft ? "" : "cursor-pointer"} ${isRejected ? "bg-[color-mix(in_srgb,var(--track)_6%,transparent)]" : ""}`}
                     >
                       <div className="flex items-start gap-2.5">
                         {selectBox(item)}
@@ -936,7 +948,10 @@ function MyEvents() {
                       </div>
 
                       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-muted">
-                        <StatusChip status={item.status} />
+                        <StatusChip
+                          status={item.status}
+                          label={!panel.approval && item.status === "recorded" ? "Submitted" : undefined}
+                        />
                         {/* Joined rather than separate spans so a wrap never
                             strands a lone separator at the end of a line. */}
                         <span>
@@ -1000,8 +1015,9 @@ function MyEvents() {
                     return (
                       <tr
                         key={item.id}
+                        onClick={(event) => openEventRow(event, item)}
                         style={isRejected ? { "--track": trackOf(item.status) } : undefined}
-                        className={`group transition hover:bg-raised/35 ${
+                        className={`group transition hover:bg-raised/35 ${item.isDraft ? "" : "cursor-pointer"} ${
                           isRejected ? "bg-[color-mix(in_srgb,var(--track)_5%,transparent)]" : ""
                         }`}
                       >
@@ -1036,7 +1052,10 @@ function MyEvents() {
                         </td>
 
                         <td className="whitespace-nowrap px-4 py-3">
-                          <StatusChip status={item.status} />
+                          <StatusChip
+                            status={item.status}
+                            label={!panel.approval && item.status === "recorded" ? "Submitted" : undefined}
+                          />
                         </td>
 
                         <td className="whitespace-nowrap px-4 py-3 text-sm text-muted">

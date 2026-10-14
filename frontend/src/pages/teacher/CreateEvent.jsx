@@ -927,14 +927,10 @@ function CreateEvent() {
     }
   };
 
-  /** Tick or untick a photo for the report; saved at once, reverted on failure. */
-  const toggleReportPhoto = async (photoId) => {
+  /** Save a report-photo choice at once, reverting it if the request fails. */
+  const saveReportPhotoChoice = async (next) => {
     const eventId = eventIdRef.current;
     if (!eventId || savingReportPhotos) return;
-
-    const next = reportPhotoIds.includes(photoId)
-      ? reportPhotoIds.filter((id) => id !== photoId)
-      : [...reportPhotoIds, photoId];
 
     const previous = reportChoice;
     setReportChoice(next);
@@ -949,6 +945,21 @@ function CreateEvent() {
       setSavingReportPhotos(false);
     }
   };
+
+  /** Tick or untick a photo for the report. */
+  const toggleReportPhoto = (photoId) =>
+    saveReportPhotoChoice(
+      reportPhotoIds.includes(photoId)
+        ? reportPhotoIds.filter((id) => id !== photoId)
+        : [...reportPhotoIds, photoId],
+    );
+
+  /** Include every uploaded photo in the generated report. */
+  const selectAllReportPhotos = () =>
+    saveReportPhotoChoice(photos.map((photo) => photo.id));
+
+  /** Remove all photos from the generated report. */
+  const clearReportPhotos = () => saveReportPhotoChoice([]);
 
   // Saved files' links are signed and expire; refetch them when one fails.
   const refreshMediaLinks = useMediaRefresh(async () => {
@@ -1768,6 +1779,8 @@ function CreateEvent() {
                     ids: reportPhotoIds,
                     busy: savingReportPhotos,
                     onToggle: toggleReportPhoto,
+                    onSelectAll: selectAllReportPhotos,
+                    onClearAll: clearReportPhotos,
                   }}
                   onPick={(files) => handlePick(files, "image")}
                   onRemove={handleRemoveMedia}

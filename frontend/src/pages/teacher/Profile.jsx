@@ -340,14 +340,6 @@ export default function TeacherProfile() {
       onClick: handlePasswordReset,
       disabled: !hasEmail || Boolean(busy),
     },
-    {
-      key: "refresh",
-      label: "Refresh details",
-      hint: "Reload your account",
-      Icon: IconRefresh,
-      onClick: loadProfile,
-      disabled: loading,
-    },
   ];
 
   return (

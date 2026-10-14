@@ -17,13 +17,15 @@ export default function EventMediaSections({
   eventName = "Event",
   columns = "grid-cols-2 sm:grid-cols-3",
   onLoadError,
+  reportPhotoSelection,
+  hideEmptySections = false,
 }) {
   const videos = items.filter(isVideo);
   const photos = items.filter((item) => !isVideo(item));
 
   return (
     <>
-      <MediaSection
+      {(!hideEmptySections || photos.length > 0) && <MediaSection
         id="event-photos"
         Icon={IconImagePlus}
         heading="Photos"
@@ -32,8 +34,9 @@ export default function EventMediaSections({
         columns={columns}
         onLoadError={onLoadError}
         emptyText="No photos uploaded for this event."
-      />
-      <MediaSection
+        photoSelection={reportPhotoSelection}
+      />}
+      {(!hideEmptySections || videos.length > 0) && <MediaSection
         id="event-videos"
         Icon={IconFilm}
         heading="Videos"
@@ -42,15 +45,17 @@ export default function EventMediaSections({
         columns={columns}
         onLoadError={onLoadError}
         emptyText="No videos uploaded for this event."
-      />
+      />}
     </>
   );
 }
 
-function MediaSection({ id, Icon, heading, items, title, columns, emptyText, onLoadError }) {
+function MediaSection({ id, Icon, heading, items, title, columns, emptyText, onLoadError, photoSelection }) {
   return (
     <section className="glass overflow-hidden" aria-labelledby={id}>
-      <div className="flex items-center justify-between gap-3 border-b hairline px-6 py-4">
+      <div
+        className={`${photoSelection ? "flex flex-wrap" : "flex"} items-center justify-between gap-3 border-b hairline px-6 py-4`}
+      >
         <div className="flex items-center gap-2.5">
           <span className="icon-tile h-9 w-9 rounded-lg">
             <Icon className="h-4 w-4" />
@@ -59,18 +64,40 @@ function MediaSection({ id, Icon, heading, items, title, columns, emptyText, onL
             {heading}
           </h2>
         </div>
-        <span className="chip chip-sm chip-solid num" aria-label={`${items.length} ${heading.toLowerCase()}`}>
-          {items.length}
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {photoSelection && (
+            <>
+              <span className="text-xs text-muted">
+                {photoSelection.selectedCount} of {items.length} in report
+              </span>
+              {photoSelection.changed && (
+                <button
+                  type="button"
+                  onClick={photoSelection.onSave}
+                  disabled={photoSelection.saving}
+                  className="btn btn-brand btn-xs"
+                >
+                  {photoSelection.saving ? <span className="spin h-3 w-3" /> : "Save"}
+                  {photoSelection.saving ? "Saving" : "report photos"}
+                </button>
+              )}
+            </>
+          )}
+          <span className="chip chip-sm chip-solid num" aria-label={`${items.length} ${heading.toLowerCase()}`}>
+            {items.length}
+          </span>
+        </div>
       </div>
 
-      <div className="p-5">
+      <div className={photoSelection ? "p-4" : "p-5"}>
+        {photoSelection && <p className="mb-3 text-xs text-muted">Choose which photos to include in the report.</p>}
         <MediaGallery
           items={items}
           title={title}
           columns={columns}
           emptyText={emptyText}
           onLoadError={onLoadError}
+          photoSelection={photoSelection}
         />
       </div>
     </section>

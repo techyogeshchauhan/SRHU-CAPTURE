@@ -280,58 +280,27 @@ def build_report_content(
     media,
     documents
 ):
-    # PRD 17: the link is optional, so the report says so rather than
-    # leaving an empty line under the heading.
-    social_url = (event.get("social_network_url") or "").strip() or "Not provided"
-
     media_count = len(media)
     document_count = len(documents)
-
-    description = (
-        split_description(event.get("description"))[0]
-        or "No description provided."
-    )
-
-    teacher_name = (
-        teacher.get("name")
-        or "Not available"
-    )
-
-    teacher_email = (
-        teacher.get("email")
-        or "Not available"
-    )
-
-    return f"""
-Event Name: {event.get("event_name")}
-
-Event Date: {event.get("event_date")}
-
-Event Type: {event.get("event_type")}
-
-Location: {event.get("location")}
-
-Teacher: {teacher_name}
-
-Teacher Email: {teacher_email}
-
-Description:
-{description}
-
-Social Network Link:
-{social_url}
-
-Photos/Videos:
-{media_count}
-
-Supporting Documents:
-{document_count}
-
-Event Status:
-Approved
-
-This report was generated automatically by Campus Capture SRHU.
-"""
+    description = split_description(event.get("description"))[0].strip()
+    fields = [
+        ("Event Name", event.get("event_name")),
+        ("Event Date", event.get("event_date")),
+        ("Event Type", event.get("event_type")),
+        ("Location", event.get("location")),
+        ("Teacher", teacher.get("name")),
+        ("Teacher Email", teacher.get("email")),
+        ("Description", description),
+        ("Social Network Link", event.get("social_network_url")),
+    ]
+    lines = [
+        f"{label}: {str(value).strip()}"
+        for label, value in fields
+        if value is not None and str(value).strip()
+    ]
+    lines.extend((f"Photos/Videos: {media_count}", f"Supporting Documents: {document_count}"))
+    lines.extend(("Event Status: Approved", "This report was generated automatically by Campus Capture SRHU."))
+    return "\n\n".join(lines)
 
 
 # ============================================================
@@ -444,12 +413,6 @@ def download_report(
 
     report = get_report(event["id"])
 
-    if not report and not event.get("report_generated_at"):
-        raise HTTPException(
-            status_code=400,
-            detail="Please generate the report first"
-        )
-
     customization = report_files.resolve_customization(
         payload,
         {
@@ -559,7 +522,7 @@ def build_dean_report_entry(
     description, meta = split_description(item.get("description"))
     item["description"] = description
     item["expected_participants"] = meta.get("expectedParticipants")
-    item["department"] = meta.get("department") or settings.default_host_department
+    item["department"] = meta.get("department") or ""
 
     is_managed = (event.get("status") == "recorded" or bool(event.get("owner_id")))
 
@@ -574,6 +537,7 @@ def build_dean_report_entry(
         approval=None if is_managed else approval_record(event),
         reference=None if is_managed else report_reference(event),
         customization=opts,
+        omit_empty_fields=True,
     )
 
 

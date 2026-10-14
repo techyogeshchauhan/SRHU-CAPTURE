@@ -156,6 +156,9 @@ class ReportEntry:
     # The reference printed under the title; None uses the Event Manager's.
     reference: str | None = None
     customization: dict | None = None
+    # Dean reports omit optional event fields the manager left blank. Other
+    # report entry points retain their established placeholder behavior.
+    omit_empty_fields: bool = False
 
 
 # ============================================================
@@ -436,6 +439,7 @@ def _details_rows(entry: "ReportEntry", customization: dict | None = None) -> li
     inc_basic = opts.get("include_basic_details", True)
     inc_sched = opts.get("include_schedule_venue", True)
     inc_other = opts.get("include_other_info", True)
+    omit_empty = entry.omit_empty_fields
 
     rows: list[tuple[str, str]] = []
 
@@ -443,17 +447,25 @@ def _details_rows(entry: "ReportEntry", customization: dict | None = None) -> li
         rows.append(("Event Name", rich(event.get("event_name"))))
 
     if inc_basic:
-        rows.append(("Event Type", rich(event.get("event_type"))))
+        event_type = str(event.get("event_type") or "").strip()
+        if event_type or not omit_empty:
+            rows.append(("Event Type", rich(event_type)))
 
     if inc_sched:
-        rows.append(("Event Date", escape(format_date_range(event.get("event_date"), event.get("end_date")))))
+        event_date = event.get("event_date") or event.get("end_date")
+        if event_date or not omit_empty:
+            rows.append(("Event Date", escape(format_date_range(event.get("event_date"), event.get("end_date")))))
         time_range = format_time_range(event.get("start_time") or "", event.get("end_time") or "")
         if time_range:
             rows.append(("Time", escape(time_range)))
-        rows.append(("Venue", rich(event.get("location"))))
+        venue = str(event.get("location") or "").strip()
+        if venue or not omit_empty:
+            rows.append(("Venue", rich(venue)))
 
     if inc_basic:
-        rows.append(("Department", rich(event.get("department") or settings.default_host_department)))
+        department = str(event.get("department") or "").strip()
+        if department or not omit_empty:
+            rows.append(("Department", rich(department or settings.default_host_department)))
         for key, label in (
             ("organizer", "Organiser"),
             ("coordinator_contact", "Contact"),
@@ -476,10 +488,15 @@ def _details_rows(entry: "ReportEntry", customization: dict | None = None) -> li
             ))
 
     if inc_basic:
-        who = rich(recorded_by.get("name") or "Not available")
-        if recorded_by.get("email"):
-            who += f"<br/><font color='#5B6475'>{escape(recorded_by['email'])}</font>"
-        rows.append((f"{entry.recorded_label} by", who))
+        name = str(recorded_by.get("name") or "").strip()
+        email = str(recorded_by.get("email") or "").strip()
+        if name.lower() == "not available":
+            name = ""
+        if name or email or not omit_empty:
+            who = rich(name or ("Not available" if not omit_empty else ""))
+            if email:
+                who += f"<br/><font color='#5B6475'>{escape(email)}</font>"
+            rows.append((f"{entry.recorded_label} by", who))
         created = event.get("created_at")
         if created and entry.show_recorded_on:
             rows.append((f"{entry.recorded_label} on", escape(format_date(str(created)[:10]))))
@@ -554,7 +571,7 @@ def _event_sections(
 
     # Printed even when empty ("No description provided."), as before the
     # sections became optional: an unticked box is the only way to drop it.
-    if inc_desc:
+    if inc_desc and (str(event.get("description") or "").strip() or not entry.omit_empty_fields):
         story += [
             CondPageBreak(SECTION_ROOM),
             Paragraph(f"{number}. Event Description & Objectives", styles["section"]),

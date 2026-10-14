@@ -42,6 +42,7 @@ export default function MediaGallery({
   columns = "grid-cols-2 sm:grid-cols-3",
   emptyText = "No photos or videos attached.",
   onLoadError,
+  photoSelection,
 }) {
   const [openIndex, setOpenIndex] = useState(null);
   const thumbRefs = useRef([]);
@@ -68,9 +69,16 @@ export default function MediaGallery({
 
   return (
     <>
-      <ul className={`grid list-none gap-3 p-0 ${columns}`}>
+      <ul
+        className={`grid list-none ${
+          photoSelection
+            ? "grid-cols-3 gap-2.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6"
+            : `gap-3 ${columns}`
+        } p-0`}
+      >
         {items.map((item, index) => {
           const video = isVideo(item);
+          const reportPosition = photoSelection?.selectedIds.indexOf(item.id) ?? -1;
           const label = `${video ? "Play video" : "View image"} ${index + 1} of ${items.length}${
             item.file_name ? `: ${item.file_name}` : ""
           }`;
@@ -122,6 +130,19 @@ export default function MediaGallery({
                   {video ? "Video" : "Image"}
                 </span>
               </button>
+              {photoSelection && !video && (
+                <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-ink">
+                  <input
+                    type="checkbox"
+                    checked={photoSelection.selectedIds.includes(item.id)}
+                    disabled={photoSelection.saving}
+                    onChange={() => photoSelection.onToggle(item.id)}
+                    aria-label={`Include ${item.file_name || `photo ${index + 1}`} in report`}
+                    className="h-4 w-4 rounded border-line text-accent focus:ring-accent"
+                  />
+                  <span>{reportPosition >= 0 ? `In report (${reportPosition + 1})` : "Include in report"}</span>
+                </label>
+              )}
             </li>
           );
         })}

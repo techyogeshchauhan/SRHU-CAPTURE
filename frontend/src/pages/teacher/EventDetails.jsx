@@ -12,8 +12,7 @@ import {
 } from "../../utils/draftStorage";
 import TeacherShell from "../../components/teacher/TeacherShell";
 import { usePanel } from "../../components/teacher/panel";
-import ReportPhotoPicker from "../../components/teacher/ReportPhotoPicker";
-import { downloadEventReport, reportNotice } from "../../services/eventManager";
+import { downloadEventReport, reportNotice, saveReportPhotos } from "../../services/eventManager";
 import PageHero from "../../components/teacher/PageHero";
 import Modal from "../../components/teacher/Modal";
 import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
@@ -85,6 +84,9 @@ function EventDetails() {
   const [event, setEvent] = useState(null);
   const [media, setMedia] = useState([]);
   const [documents, setDocuments] = useState([]);
+  const [reportPhotoIds, setReportPhotoIds] = useState([]);
+  const [savedReportPhotoIds, setSavedReportPhotoIds] = useState([]);
+  const [savingReportPhotos, setSavingReportPhotos] = useState(false);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -120,6 +122,9 @@ function EventDetails() {
       setEvent(eventData);
       setMedia(mediaData || []);
       setDocuments(docData || []);
+      const selectedPhotos = eventData.report_photo_ids || [];
+      setReportPhotoIds(selectedPhotos);
+      setSavedReportPhotoIds(selectedPhotos);
     } catch (err) {
       console.error("Event details error:", err);
       setError(err.message || "Unable to load event details.");
@@ -139,6 +144,27 @@ function EventDetails() {
     setMedia(mediaData || []);
     setDocuments(docData || []);
   });
+
+  const reportPhotosChanged =
+    reportPhotoIds.length !== savedReportPhotoIds.length ||
+    reportPhotoIds.some((id, index) => id !== savedReportPhotoIds[index]);
+
+  const handleSaveReportPhotos = async () => {
+    try {
+      setSavingReportPhotos(true);
+      const result = await saveReportPhotos(eventId, reportPhotoIds, panel.api);
+      const ids = result?.report_photo_ids || reportPhotoIds;
+      setReportPhotoIds(ids);
+      setSavedReportPhotoIds(ids);
+      setEvent((current) => ({ ...current, report_photo_ids: ids }));
+      setActionNotice("Report photos saved.");
+      setReportError("");
+    } catch (err) {
+      setReportError(err?.message || "Could not save the report photos.");
+    } finally {
+      setSavingReportPhotos(false);
+    }
+  };
 
   const originState = useOriginState();
 
@@ -558,7 +584,32 @@ function EventDetails() {
         </section>
 
         {/* ------------------------------------------------------- the files */}
-        <div className="mt-6 grid gap-6 md:grid-cols-2">
+        <div className="mt-6 space-y-6">
+          {/* Photos and videos in their own cards, every item shown; each
+              opens the viewer, where images show full size and videos play. */}
+          <EventMediaSections
+            items={media}
+            eventName={event.event_name || "Event"}
+            onLoadError={refreshMediaLinks}
+            reportPhotoSelection={
+              panel.reports || canTeacherEditEvent(event)
+                ? {
+                    selectedIds: reportPhotoIds,
+                    selectedCount: reportPhotoIds.length,
+                    changed: reportPhotosChanged,
+                    saving: savingReportPhotos,
+                    onToggle: (photoId) => {
+                      setReportPhotoIds((current) =>
+                        current.includes(photoId)
+                          ? current.filter((id) => id !== photoId)
+                          : [...current, photoId]
+                      );
+                    },
+                    onSave: handleSaveReportPhotos,
+                  }
+                : undefined
+            }
+          />
 
           <section className="glass overflow-hidden">
             <div className="flex items-center justify-between border-b hairline px-6 py-4">
@@ -606,33 +657,7 @@ function EventDetails() {
               )}
             </div>
           </section>
-
-          {/* Photos and videos in their own cards, every item shown; each
-              opens the viewer, where images show full size and videos play. */}
-          <EventMediaSections
-            items={media}
-            eventName={event.event_name || "Event"}
-            columns="grid-cols-2"
-            onLoadError={refreshMediaLinks}
-          />
         </div>
-
-        {/* A teacher can change the Dean report's photos while the event is
-            still editable; the Event Manager's events always are. */}
-        {(panel.reports || canTeacherEditEvent(event)) && (
-          <ReportPhotoPicker
-            key={(event.report_photo_ids || []).join(",")}
-            eventId={event.id}
-            api={panel.api}
-            photos={media.filter((item) => item.media_type === "image")}
-            initial={event.report_photo_ids || []}
-            onSaved={(ids) => {
-              setEvent((current) => ({ ...current, report_photo_ids: ids }));
-              setActionNotice("Report photos saved.");
-            }}
-            onError={setReportError}
-          />
-        )}
       </div>
 
       {/* ----------------------------------------------------- delete modal */}
