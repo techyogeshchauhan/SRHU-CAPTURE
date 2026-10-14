@@ -4,6 +4,7 @@ import StatusChip from "../teacher/StatusChip";
 import Modal from "../teacher/Modal";
 import ProgressTimeline from "../teacher/ProgressTimeline";
 import { SubmitterLine } from "../common/submitter";
+import { apiJson } from "../../services/api";
 import readEventFields from "../../utils/eventFields";
 import { formatDateRange, formatTime12h } from "../../utils/dates";
 import {
@@ -760,6 +761,24 @@ function SubmissionRow({
   renderDrawerActions,
   allowDecisions,
 }) {
+  const [documents, setDocuments] = useState(null);
+  const [documentsError, setDocumentsError] = useState(false);
+  const [documentsRetry, setDocumentsRetry] = useState(0);
+
+  useEffect(() => {
+    if (!isExpanded || documents !== null) return undefined;
+
+    const controller = new AbortController();
+    setDocumentsError(false);
+    apiJson(`/dean/events/${event.id}/documents`, { signal: controller.signal })
+      .then((data) => setDocuments(Array.isArray(data?.documents) ? data.documents : []))
+      .catch((error) => {
+        if (error?.name !== "AbortError") setDocumentsError(true);
+      });
+
+    return () => controller.abort();
+  }, [documents, documentsRetry, event.id, isExpanded]);
+
   const fields = useMemo(() => readEventFields(event), [event]);
   const actualParticipantCount =
     event.participant_count ??
@@ -974,21 +993,37 @@ function SubmissionRow({
               Attached Documents & Files
             </div>
 
-            {Array.isArray(event.documents) && event.documents.length > 0 ? (
+            {documentsError ? (
+              <div className="flex items-center gap-2 text-xs text-muted">
+                <span>Could not load attached documents.</span>
+                <button
+                  type="button"
+                  className="text-accent underline"
+                  onClick={() => {
+                    setDocumentsError(false);
+                    setDocumentsRetry((attempt) => attempt + 1);
+                  }}
+                >
+                  Try again
+                </button>
+              </div>
+            ) : documents === null ? (
+              <p className="text-xs text-muted">Loading attached documents...</p>
+            ) : documents.length > 0 ? (
               <ul className="divide-y divide-line/30 text-xs">
-                {event.documents.map((doc, idx) => (
+                {documents.map((doc, idx) => (
                   <li key={doc.id || idx} className="flex items-center justify-between py-2">
                     <span className="font-medium text-ink truncate">
-                      {doc.filename || doc.name || `Document #${idx + 1}`}
+                      {doc.file_name || doc.filename || doc.name || `Document #${idx + 1}`}
                     </span>
-                    {doc.url && (
+                    {(doc.file_url || doc.url) && (
                       <a
-                        href={doc.url}
+                        href={doc.file_url || doc.url}
                         target="_blank"
-                        rel="noreferrer"
+                        rel="noopener noreferrer"
                         className="btn btn-ghost btn-xs text-accent"
                       >
-                        Download
+                        Open
                       </a>
                     )}
                   </li>
