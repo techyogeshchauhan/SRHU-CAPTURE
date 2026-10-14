@@ -21,7 +21,7 @@ export const MAX_IMAGE_SIZE = DEFAULT_UPLOAD_LIMITS.max_photo_size_mb * MB;
 export const ALLOWED_IMAGE_TYPES = [
   "image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/webp", "image/gif",
 ];
-export const ALLOWED_IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif"];
+export const ALLOWED_IMAGE_EXTENSIONS = ["jpg", "jpeg", "jpe", "png", "webp", "gif"];
 
 /** PRD 11: one combined budget, no cap on how many files it is split across. */
 export const MAX_VIDEO_TOTAL = DEFAULT_UPLOAD_LIMITS.max_video_total_mb * MB;

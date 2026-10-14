@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 MEDIA_TYPES: dict[str, tuple[str, str, frozenset[str]]] = {
     ".jpg": ("image", "image/jpeg", frozenset({"image/jpeg", "image/jpg", "image/pjpeg"})),
     ".jpeg": ("image", "image/jpeg", frozenset({"image/jpeg", "image/jpg", "image/pjpeg"})),
+    ".jpe": ("image", "image/jpeg", frozenset({"image/jpeg", "image/jpg", "image/pjpeg"})),
     ".png": ("image", "image/png", frozenset({"image/png"})),
     ".webp": ("image", "image/webp", frozenset({"image/webp"})),
     ".gif": ("image", "image/gif", frozenset({"image/gif"})),
@@ -159,6 +160,7 @@ def _is_iso_bmff(head: bytes) -> bool:
 _MAGIC_CHECKS = {
     ".jpg": lambda h: h.startswith(b"\xff\xd8\xff"),
     ".jpeg": lambda h: h.startswith(b"\xff\xd8\xff"),
+    ".jpe": lambda h: h.startswith(b"\xff\xd8\xff"),
     ".png": lambda h: h.startswith(b"\x89PNG\r\n\x1a\n"),
     ".gif": lambda h: h.startswith((b"GIF87a", b"GIF89a")),
     ".webp": lambda h: h.startswith(b"RIFF") and h[8:12] == b"WEBP",
