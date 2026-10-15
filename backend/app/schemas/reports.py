@@ -23,7 +23,7 @@ class ReportCustomizationOptions(BaseModel):
     )
     include_other_info: bool = Field(
         default=True,
-        description="Include other event information such as expected participants and social media link.",
+        description="Include other event information such as No. of Participants and social media link.",
     )
     include_photos: bool = Field(
         default=True,

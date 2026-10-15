@@ -477,7 +477,7 @@ def _details_rows(entry: "ReportEntry", customization: dict | None = None) -> li
     if inc_other:
         val = str(event.get("expected_participants") or "").strip()
         if val:
-            rows.append(("Expected Participants", rich(val)))
+            rows.append(("No. of Participants", rich(val)))
         social_url = str(event.get("social_network_url") or "").strip()
         if social_url:
             rows.append((
