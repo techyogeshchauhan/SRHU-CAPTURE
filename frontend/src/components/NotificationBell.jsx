@@ -111,7 +111,8 @@ export default function NotificationBell({ currentUser, onNew }) {
   const userId = currentUser?.id;
   const role = currentUser?.role === "dean" ? "dean" : "teacher";
 
-  const eventPath = (id) => (role === "dean" ? `/dean/events/${id}` : `/teacher/events/${id}`);
+  const panelBase = currentUser?.role === "event_manager" ? "/event_manager" : `/${role}`;
+  const eventPath = (id) => `${panelBase}/events/${id}`;
 
   /* ---- Fetch, and spot what is new since the last look ---- */
   const loadNotifications = useCallback(async () => {
@@ -296,7 +297,7 @@ export default function NotificationBell({ currentUser, onNew }) {
     setOpen(false);
     setHistoryOpen(false);
     // Back from the wizard returns to the page the bell was opened on.
-    navigate(`/teacher/create-event?editEventId=${notif.event_id}`, { state: originState });
+    navigate(`${panelBase}/create-event?editEventId=${notif.event_id}`, { state: originState });
   };
 
   const filteredHistory = notifications.filter((n) => {

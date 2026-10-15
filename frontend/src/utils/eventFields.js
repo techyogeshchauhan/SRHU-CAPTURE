@@ -23,6 +23,20 @@ import { decodeEventMetadata } from "./draftStorage";
  */
 export const DEFAULT_HOST_DEPARTMENT = "SST";
 
+const HOST_DEPARTMENT_DISPLAY_NAME =
+  "Computer Science and Engineering, School of Science and Technology";
+
+/**
+ * Resolve the explicit field, legacy metadata or host default for display.
+ * Keep the persisted identifier used by the create-event wizard unchanged.
+ */
+export function getEventDepartmentName(event = {}) {
+  const department = readEventFields(event).department;
+  return department.toUpperCase() === DEFAULT_HOST_DEPARTMENT
+    ? HOST_DEPARTMENT_DISPLAY_NAME
+    : department;
+}
+
 const firstNonEmpty = (...values) => {
   for (const value of values) {
     const text = value == null ? "" : String(value).trim();

@@ -50,8 +50,7 @@ import {
   isRefused,
 } from "../../utils/constants";
 import { formatDateRange, formatTime12h } from "../../utils/dates";
-import { readEventFields } from "../../utils/eventFields";
-import { decodeEventMetadata } from "../../utils/draftStorage";
+import { getEventDepartmentName, readEventFields } from "../../utils/eventFields";
 
 function EventDetails() {
   const { eventId } = useParams();
@@ -585,8 +584,7 @@ function EventDetails() {
   // readEventFields prefers the columns and falls back to the blob, so an
   // event created before the promotion still renders in full.
   const meta = readEventFields(event);
-  const rawMetadata = decodeEventMetadata(event.description || "").meta;
-  const enteredDepartment = event.department?.trim() || rawMetadata.department?.trim() || "";
+  const departmentName = getEventDepartmentName(event);
   const cleanDescription = meta.description;
 
   // Bucket-wide, like getApproveLabel: a revoked event is a refused event,
@@ -599,12 +597,13 @@ function EventDetails() {
   // or deleting, but every decision on it is refused by the server — so the
   // controls that would 404 are replaced by the one action that applies.
   const archived = Boolean(event.archived_at);
-  const nextStage = getNextStage(event.status);
-  const previousStage = getPreviousStage(event.status);
+  const nextStage = event.owner_id ? null : getNextStage(event.status);
+  const previousStage = event.owner_id ? null : getPreviousStage(event.status);
   const isApproved = getStatusBucket(event.status) === "approved";
   // The report exists once the event is Completed or Recorded (the server enforces
   // the same rule on generate and download).
-  const canReport = event.status === "completed" || event.status === "recorded";
+  const canReport = event.status === "completed" || event.status === "recorded" ||
+    (Boolean(event.owner_id) && event.status === "approved");
 
   // Its own action now, not a rejection wearing a different label (PRD 18).
   const isRevoking = decisionKind === "revoke";
@@ -668,11 +667,7 @@ function EventDetails() {
       value: `${submitter.name} (${submitter.role})${event.teacher_email && event.teacher_email !== submitter.name ? ` · ${event.teacher_email}` : ""}`,
       Icon: IconUser,
     },
-    {
-      label: "Department",
-      value: enteredDepartment,
-      Icon: IconBuilding,
-    },
+    { label: "Department", value: departmentName, Icon: IconBuilding },
     {
       label: "No. of Participants",
       value: meta.expectedParticipants || "",
@@ -768,8 +763,8 @@ function EventDetails() {
 
               <dl className="mt-5 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {details.map((item) => (
-                  <div key={item.label} className="flex items-start gap-3">
-                    <span className="icon-tile h-9 w-9 rounded-xl">
+                  <div key={item.label} className="flex min-w-0 items-start gap-3">
+                    <span className="icon-tile h-9 w-9 shrink-0 rounded-xl">
                       <item.Icon className="h-4 w-4" />
                     </span>
                     <div className="min-w-0">
@@ -1181,7 +1176,7 @@ function EventDetails() {
                   </button>
                 )}
 
-                {canRequestChanges(event) && (
+                {!event.owner_id && canRequestChanges(event) && (
                   <button
                     type="button"
                     onClick={() => openDecision("changes")}

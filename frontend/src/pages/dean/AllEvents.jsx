@@ -245,8 +245,8 @@ function EventActions({
         <span>Report</span>
       </button>
 
-      {/* 2. Primary decision button */}
-      {hasApprove ? (
+      {/* 2. Primary decision buttons */}
+      {hasApprove && (
         <button
           type="button"
           onClick={() => onApprove(event)}
@@ -257,18 +257,9 @@ function EventActions({
           {isProcessing ? <span className="spin h-3.5 w-3.5" /> : <IconCheck />}
           {getApproveLabel(event)}
         </button>
-      ) : hasRevoke ? (
-        <button
-          type="button"
-          onClick={() => onRevoke(event)}
-          disabled={isProcessing}
-          title="Withdraw this event's approval"
-          className="btn btn-danger btn-xs"
-        >
-          {isProcessing ? <span className="spin h-3.5 w-3.5" /> : <IconX />}
-          Revoke
-        </button>
-      ) : hasReject ? (
+      )}
+
+      {hasReject && (
         <button
           type="button"
           onClick={() => onReject(event)}
@@ -279,7 +270,20 @@ function EventActions({
           {isProcessing ? <span className="spin h-3.5 w-3.5" /> : <IconX />}
           Reject
         </button>
-      ) : null}
+      )}
+
+      {!hasApprove && hasRevoke && (
+        <button
+          type="button"
+          onClick={() => onRevoke(event)}
+          disabled={isProcessing}
+          title="Withdraw this event's approval"
+          className="btn btn-danger btn-xs"
+        >
+          {isProcessing ? <span className="spin h-3.5 w-3.5" /> : <IconX />}
+          Revoke
+        </button>
+      )}
 
       {/* 3. More (⋯) menu */}
       <RowMenu

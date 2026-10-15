@@ -76,7 +76,10 @@ NOT_COMPLETED_DETAIL = (
 
 
 def is_completed(event) -> bool:
-    return (event or {}).get("status") in (REPORTABLE_STATUS, "recorded")
+    event = event or {}
+    return event.get("status") in (REPORTABLE_STATUS, "recorded") or (
+        bool(event.get("owner_id")) and event.get("status") == "approved"
+    )
 
 
 def get_event(event_id: str):

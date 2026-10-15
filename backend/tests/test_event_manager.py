@@ -308,15 +308,15 @@ class EventFlowTests(EventManagerTestCase):
         for key in ("event_name", "event_date", "location", "organizer", "coordinator_contact", "start_time"):
             self.assertEqual(event[key], EVENT[key], key)
 
-    def test_saving_records_the_event_without_any_review(self) -> None:
+    def test_saving_submits_the_event_for_dean_review(self) -> None:
         event = self.draft()
         self.photo(event["id"])
         self.document(event["id"])
         response = self.save(event["id"])
         self.assertEqual(response.status_code, 200, response.text)
         saved = response.json()["event"]
-        self.assertEqual(saved["status"], "recorded")
-        self.assertEqual(saved["history"][-1]["action"], "recorded")
+        self.assertEqual(saved["status"], "pending")
+        self.assertEqual(saved["history"][-1]["action"], "submitted")
 
     def test_mandatory_photo_and_document_as_for_teachers(self) -> None:
         event = self.draft()
@@ -615,6 +615,7 @@ class ReportTests(EventManagerTestCase):
             files={"file": ("summary_report.pdf", b"%PDF-1.4\n%%EOF\n", "application/pdf")},
             data={"category": "report"},
         )
+        self.photo(event["id"])
         self.save(event["id"])
 
         # Include notices only:
@@ -646,6 +647,7 @@ class ReportTests(EventManagerTestCase):
         photo_resp = self.photo(event["id"])
         self.assertEqual(photo_resp.status_code, 201)
         photo_id = photo_resp.json()["media"]["id"]
+        self.document(event["id"])
         self.save(event["id"])
 
         payload = {

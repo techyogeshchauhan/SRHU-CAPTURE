@@ -51,9 +51,9 @@ function indexFor(status) {
  * The approval rail. Each node is tinted from the `--track` hex of the state
  * it represents, so the tracker and the status pills always agree.
  */
-export default function Lifecycle({ status = "pending" }) {
+export default function Lifecycle({ status = "pending", approvalOnly = false, compact = false }) {
   status = String(status || "pending").toLowerCase();
-  const steps = STEPS(status);
+  const steps = STEPS(status).filter((step) => !approvalOnly || step.id !== "completed");
   const current = indexFor(status);
 
   return (
@@ -61,7 +61,7 @@ export default function Lifecycle({ status = "pending" }) {
       {/* The spine sits behind the nodes and stops level with their centres. */}
       <span
         aria-hidden="true"
-        className="absolute left-0 right-0 top-[1.125rem] h-0.5 bg-line/12"
+        className={`absolute left-0 right-0 ${compact ? "top-[0.875rem]" : "top-[1.125rem]"} h-0.5 bg-line/12`}
       />
 
       {steps.map((step, idx) => {
@@ -84,20 +84,22 @@ export default function Lifecycle({ status = "pending" }) {
             background: `color-mix(in srgb, ${track} 18%, transparent)`,
             borderColor: track,
             color: track,
-            boxShadow: `0 0 0 4px color-mix(in srgb, ${track} 18%, transparent)`,
+            boxShadow: `0 0 0 ${compact ? "3px" : "4px"} color-mix(in srgb, ${track} 18%, transparent)`,
           };
         }
 
         return (
-          <li key={step.id} className="relative z-10 flex flex-1 flex-col items-center gap-2">
+          <li key={step.id} className={`relative z-10 flex flex-1 flex-col items-center ${compact ? "gap-1" : "gap-2"}`}>
             <span
               style={nodeStyle}
-              className="flex h-9 w-9 items-center justify-center rounded-full border-2 bg-surface font-display text-xs font-bold text-muted"
+              className={`flex items-center justify-center rounded-full border-2 bg-surface font-display font-bold text-muted ${
+                compact ? "h-7 w-7 text-[11px]" : "h-9 w-9 text-xs"
+              }`}
             >
               {failed ? (
-                <IconX className="h-4 w-4" />
+                <IconX className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
               ) : done ? (
-                <IconCheck className="h-4 w-4" />
+                <IconCheck className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
               ) : (
                 idx + 1
               )}
@@ -105,9 +107,9 @@ export default function Lifecycle({ status = "pending" }) {
 
             <span
               style={isCurrent ? { color: track } : undefined}
-              className={`text-center text-[11px] font-semibold leading-tight ${
-                isCurrent ? "" : isPast ? "text-ink" : "text-muted"
-              }`}
+              className={`text-center font-semibold leading-tight ${
+                compact ? "text-[10.5px] max-w-[6.5rem]" : "text-[11px]"
+              } ${isCurrent ? "" : isPast ? "text-ink" : "text-muted"}`}
             >
               {step.label}
             </span>

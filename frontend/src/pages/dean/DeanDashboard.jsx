@@ -12,6 +12,7 @@ import { programShare } from "../../components/dean/programShades";
 import { trackOf } from "../../components/teacher/status";
 import useThemeTokens from "../../components/theme/useThemeTokens";
 import { formatRowDate } from "../../utils/submissionGrouping";
+import { getEventDepartmentName } from "../../utils/eventFields";
 import {
   IconAlertTriangle,
   IconArrowRight,
@@ -788,19 +789,18 @@ export default function DeanDashboard() {
                           {formatRowDate(event.event_date || event.start_date || event.created_at)}
                         </span>
 
-                        <div className="flex min-w-0 items-center gap-2">
+                        <div className="min-w-0 flex-1">
                           <Link
                             to={`/dean/events/${event.id}`}
-                            className="truncate font-semibold text-sm text-ink hover:text-accent"
+                            className="block truncate font-semibold text-sm text-ink hover:text-accent"
                             title={event.event_name}
                           >
                             {event.event_name || "Untitled Event"}
                           </Link>
 
-                          <span className="hidden truncate text-xs text-muted md:inline">
-                            · {event.event_type || "Event"}
-                            {event.department ? ` · ${event.department}` : ""}
-                          </span>
+                          <p className="mt-1 whitespace-normal break-words text-xs leading-5 text-muted">
+                            {event.event_type || "Event"} · {getEventDepartmentName(event)}
+                          </p>
                         </div>
                       </div>
 

@@ -280,7 +280,7 @@ function TeacherDashboard() {
 
         <PageHero
           eyebrow="Overview"
-          title={panel.approval ? "Teacher" : "Event Manager"}
+          title={panel.roleLabel}
           accent="Portal"
           subtitle={`Welcome back, ${profile?.name || panel.roleLabel}. Manage your campus events and proposals from one place.`}
           actions={
@@ -368,6 +368,14 @@ function TeacherDashboard() {
                         .filter(Boolean)
                         .join(" · ") || "Nothing set yet"}
                     </p>
+                    {isRefusedStatus(item.status) && getRefusalReason(item) && (
+                      <p
+                        className="mt-1 line-clamp-2 text-xs font-medium text-err"
+                        title={getRefusalReason(item)}
+                      >
+                        <span className="font-semibold">Reason:</span> {getRefusalReason(item)}
+                      </p>
+                    )}
                     <div className="mt-3 flex flex-wrap items-center gap-1.5">
                       <RowActions
                         item={item}
@@ -411,6 +419,14 @@ function TeacherDashboard() {
                             <p className="truncate text-xs text-muted">
                               {cleanDesc || item.event_type || "No description"}
                             </p>
+                            {isRefusedStatus(item.status) && getRefusalReason(item) && (
+                              <p
+                                className="mt-1 line-clamp-2 text-xs font-medium text-err"
+                                title={getRefusalReason(item)}
+                              >
+                                <span className="font-semibold">Reason:</span> {getRefusalReason(item)}
+                              </p>
+                            )}
                           </td>
 
                           <td className="whitespace-nowrap px-5 py-3.5 text-sm text-muted">
@@ -568,7 +584,10 @@ function TeacherDashboard() {
           </div>
         )}
 
-        <Lifecycle status={trackingEvent?.status || "pending"} />
+        <Lifecycle
+          status={trackingEvent?.status || "pending"}
+          approvalOnly={panel.role === "event_manager"}
+        />
       </Modal>
     </TeacherShell>
   );
@@ -658,7 +677,7 @@ function RowActions({ item, onDuplicate, onDelete, onTrack, originState }) {
         </span>
       )}
 
-      {panel.approval ? (
+      {panel.approval && (
         <button
           type="button"
           onClick={() => onTrack(item)}
@@ -668,8 +687,8 @@ function RowActions({ item, onDuplicate, onDelete, onTrack, originState }) {
         >
           <IconActivity />
         </button>
-      ) : (
-        !item.isDraft && item.status === "recorded" && (
+      )}
+      {panel.reports && !item.isDraft && isApprovedStatus(item.status) && (
           <button
             type="button"
             onClick={async () => {
@@ -689,7 +708,6 @@ function RowActions({ item, onDuplicate, onDelete, onTrack, originState }) {
           >
             {reporting ? <span className="spin h-3.5 w-3.5" /> : <IconDownload />}
           </button>
-        )
       )}
     </>
   );

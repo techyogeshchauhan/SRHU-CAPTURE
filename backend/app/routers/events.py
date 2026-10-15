@@ -2,6 +2,7 @@ import logging
 import re
 from datetime import date, timedelta
 
+from bson import ObjectId
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -15,10 +16,8 @@ from fastapi import (
     UploadFile,
     status,
 )
-from bson import ObjectId
 from pymongo import ASCENDING, DESCENDING
 
-from app.config import settings
 from app.database import (
     event_documents,
     event_media,
@@ -409,7 +408,8 @@ def ensure_not_own_event(event: dict, user: dict) -> None:
     A teacher promoted to Dean keeps their events, and nothing stopped them
     approving (or advancing) their own pending submission.
     """
-    if event.get("teacher_id") and str(event.get("teacher_id")) == str(user.get("id")):
+    owner_id = event.get("teacher_id") or event.get("owner_id")
+    if owner_id and str(owner_id) == str(user.get("id")):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You submitted this event, so another Dean has to decide on it.",
@@ -595,7 +595,7 @@ def notify_teacher(
     reapproved: bool = False,
 ) -> None:
     """Create the in-app notification and queue the matching email."""
-    teacher_id = event.get("teacher_id", "")
+    teacher_id = event.get("teacher_id") or event.get("owner_id", "")
 
     safe_create_notification(
         user_id=teacher_id,
@@ -606,7 +606,9 @@ def notify_teacher(
         data=data,
     )
 
-    if not email_service.is_configured():
+    # Event Manager decisions use the same persisted in-app feed. Teacher
+    # emails link to /teacher, so keep that existing delivery flow teacher-only.
+    if event.get("owner_id") or not email_service.is_configured():
         return
 
     teacher = users.find_one({"_id": to_object_id(teacher_id)}, {"email": 1, "name": 1})
@@ -993,7 +995,7 @@ def get_all_events(
     event_list, total = paginate_with_managed(
         query,
         [("submitted_at", DESCENDING), ("created_at", DESCENDING)],
-        [("recorded_at", DESCENDING), ("created_at", DESCENDING)],
+        [("submitted_at", DESCENDING), ("recorded_at", DESCENDING), ("created_at", DESCENDING)],
         newest_first,
         skip,
         limit,

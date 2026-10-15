@@ -6,6 +6,7 @@ import { trackOf } from "../teacher/status";
 import { getRefusalReason, getStatusBucket } from "../../utils/constants";
 import { IconInbox, IconRotateCcw } from "../teacher/icons";
 import { SubmitterCell, SubmitterLine } from "../common/submitter";
+import { getEventDepartmentName } from "../../utils/eventFields";
 
 /**
  * The Dean's event list: a card list on narrow screens, a table on wide ones.
@@ -120,6 +121,9 @@ function EventsTable({
                         {event.event_name || "Untitled Event"}
                       </Link>
                     </div>
+                    <p className="mt-1 whitespace-normal break-words text-xs leading-5 text-muted">
+                      {getEventDepartmentName(event)}
+                    </p>
                     <SubmitterLine event={event} className="mt-1" />
 
                     <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-muted">
@@ -209,6 +213,10 @@ function EventsTable({
                         >
                           {event.event_name || "Untitled Event"}
                         </Link>
+
+                        <p className="mt-1 whitespace-normal break-words text-xs leading-5 text-muted">
+                          {getEventDepartmentName(event)}
+                        </p>
 
                         {rejected && getRefusalReason(event) && (
                           <p

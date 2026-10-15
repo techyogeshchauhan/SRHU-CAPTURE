@@ -15,6 +15,7 @@ export function canDownloadEventReport(event) {
   const isCompletedOrRecorded =
     event.status === "completed" ||
     event.status === "recorded" ||
+    (event.status === "approved" && (event.owner_id || event.submitted_by_role === "event_manager")) ||
     Boolean(event.report_generated_at);
 
   if (!isCompletedOrRecorded) {

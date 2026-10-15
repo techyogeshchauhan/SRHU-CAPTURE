@@ -147,7 +147,7 @@ function EventActions({ item, canDelete, onDuplicate, onDelete, originState, onR
         </Link>
       )}
 
-      {panel.reports && !item.isDraft && item.status === "recorded" && (
+      {panel.reports && !item.isDraft && isApprovedStatus(item.status) && (
         <button
           type="button"
           onClick={() => onReport(item)}
@@ -449,7 +449,7 @@ function MyEvents() {
   // Event Manager; drafts and not-yet-approved events for a teacher); a report
   // covers the Event Manager's recorded events.
   const selectable = () => true;
-  const reportable = (item) => panel.reports && !item.isDraft && item.status === "recorded";
+  const reportable = (item) => panel.reports && !item.isDraft && isApprovedStatus(item.status);
   const visibleSelectable = filteredItems.map((item) => item.id);
   const allVisibleSelected =
     visibleSelectable.length > 0 && visibleSelectable.every((id) => selected.has(id));

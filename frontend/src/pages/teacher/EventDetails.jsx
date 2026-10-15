@@ -5,7 +5,7 @@ import { useOriginState } from "../../hooks/useOriginState";
 import { fetchCurrentUser, signOut } from "../../services/auth";
 import { canTeacherEditEvent, getRefusalReason } from "../../utils/constants";
 import { formatDateRange, formatTime12h } from "../../utils/dates";
-import { readEventFields } from "../../utils/eventFields";
+import { getEventDepartmentName, readEventFields } from "../../utils/eventFields";
 import { buildTimeline } from "../../utils/eventHistory";
 import {
   duplicateEventAsDraft,
@@ -284,6 +284,7 @@ function EventDetails() {
   // and revoked, hiding Delete on events the server would have deleted.
   const canDelete = canTeacherEditEvent(event);
   const refusalReason = getRefusalReason(event);
+  const isEventManager = panel.role === "event_manager";
 
   const facts = [
     {
@@ -303,7 +304,11 @@ function EventDetails() {
   ];
 
   const details = [
-    { Icon: IconBuilding, label: "Department / School", value: meta.department || "University-wide" },
+    {
+      Icon: IconBuilding,
+      label: isEventManager ? "Department" : "Department / School",
+      value: isEventManager ? getEventDepartmentName(event) : meta.department || "University-wide",
+    },
     {
       Icon: IconUser,
       label: "Organizer / Coordinator",
@@ -318,6 +323,8 @@ function EventDetails() {
       ? [{ Icon: IconUsers, label: "No. of Participants", value: meta.expectedParticipants }]
       : []),
   ];
+
+  const coordinationDetails = isEventManager ? [...facts, ...details] : details;
 
   return (
     <TeacherShell
@@ -354,13 +361,13 @@ function EventDetails() {
           </Link>
 
           <div className="flex flex-wrap items-center gap-2">
-            {panel.approval ? (
+            {panel.approval && (
               <button type="button" onClick={scrollToLifecycle} className="btn btn-ghost btn-xs">
                 <IconActivity />
                 Track Status
               </button>
-            ) : (
-              panel.reports && event.status === "recorded" && (
+            )}
+            {panel.reports && isApprovedStatus(event.status) && (
                 <button
                   type="button"
                   onClick={handleDownloadReport}
@@ -370,7 +377,6 @@ function EventDetails() {
                   {reporting ? <span className="spin h-3 w-3" /> : <IconDownload />}
                   Download Report
                 </button>
-              )
             )}
 
             <button
@@ -426,21 +432,23 @@ function EventDetails() {
           subtitle={`Organized by ${meta.organizer || profile?.name || panel.roleLabel}`}
           actions={<StatusChip status={event.status} size="md" />}
         >
-          <dl className="grid gap-4 border-t hairline pt-5 sm:grid-cols-3">
-            {facts.map((fact) => (
-              <div key={fact.label} className="flex items-center gap-3">
-                <span className="icon-tile h-9 w-9 rounded-xl">
-                  <fact.Icon className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <dt className="text-[11px] font-semibold uppercase tracking-[.12em] text-muted">
-                    {fact.label}
-                  </dt>
-                  <dd className="truncate text-sm font-medium text-ink">{fact.value}</dd>
+          {!isEventManager && (
+            <dl className="grid gap-4 border-t hairline pt-5 sm:grid-cols-3">
+              {facts.map((fact) => (
+                <div key={fact.label} className="flex items-center gap-3">
+                  <span className="icon-tile h-9 w-9 shrink-0 rounded-xl">
+                    <fact.Icon className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <dt className="text-[11px] font-semibold uppercase tracking-[.12em] text-muted">
+                      {fact.label}
+                    </dt>
+                    <dd className="truncate text-sm font-medium text-ink">{fact.value}</dd>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </dl>
+              ))}
+            </dl>
+          )}
         </PageHero>
 
         {/* ---------------------------------------------- approved, plainly */}
@@ -448,7 +456,7 @@ function EventDetails() {
           <section
             style={{ "--track": trackOf("approved") }}
             data-tint="approved"
-            className="reveal mt-6 flex items-start gap-3 rounded-2xl border px-6 py-4"
+            className={`reveal ${isEventManager ? "mt-4 px-5 py-3" : "mt-6 px-6 py-4"} flex items-start gap-3 rounded-2xl border`}
             role="status"
           >
             <IconCheckCircle
@@ -469,7 +477,7 @@ function EventDetails() {
         {/* ------------------------------------------- progress and updates
             The approval tracker: only where the Dean reviews events. */}
         {panel.approval && (
-        <section id="approval-lifecycle-section" className="glass reveal mt-6 p-6">
+        <section id="approval-lifecycle-section" className={`glass reveal ${isEventManager ? "mt-4 p-4 sm:p-5" : "mt-6 p-6"}`}>
           <p className="eyebrow">Tracking</p>
           <h2 className="h3 mt-1 text-ink">Event progress &amp; updates</h2>
           <p className="prose-muted mt-0.5 text-xs">
@@ -477,15 +485,24 @@ function EventDetails() {
             the Dean has said about it.
           </p>
 
-          <div className="mt-7">
-            <Lifecycle status={event.status || "pending"} />
+          <div className={isEventManager ? "mt-4" : "mt-7"}>
+            <Lifecycle
+              status={event.status === "recorded" ? "approved" : event.status || "pending"}
+              approvalOnly={isEventManager}
+              compact={isEventManager}
+            />
           </div>
 
-          <div className="mt-8 border-t hairline pt-6">
-            <h3 className="mb-4 font-display text-sm font-semibold text-ink">
+          <div className={isEventManager ? "mt-4 border-t hairline pt-3.5" : "mt-8 border-t hairline pt-6"}>
+            <h3 className={`${isEventManager ? "mb-2.5 text-xs font-semibold uppercase tracking-wider text-muted" : "mb-4 text-sm font-semibold text-ink"} font-display`}>
               History
             </h3>
-            <ProgressTimeline event={event} viewerId={profile?.id} perspective="teacher" />
+            <ProgressTimeline
+              event={event}
+              viewerId={profile?.id}
+              perspective="teacher"
+              compact={isEventManager}
+            />
           </div>
         </section>
         )}
@@ -498,9 +515,9 @@ function EventDetails() {
           <section
             style={{ "--track": trackOf(event.status) }}
             data-tint="rejected"
-            className="reveal mt-6 overflow-hidden rounded-2xl border"
+            className={`reveal ${isEventManager ? "mt-4" : "mt-6"} overflow-hidden rounded-2xl border`}
           >
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b px-6 py-4"
+            <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${isEventManager ? "px-5 py-3" : "px-6 py-4"}`}
                  style={{ borderColor: "color-mix(in srgb, var(--track) 22%, transparent)" }}>
               <div className="flex items-center gap-2.5">
                 <IconAlertTriangle className="h-5 w-5" style={{ color: trackOf(event.status) }} />
@@ -523,28 +540,28 @@ function EventDetails() {
               )}
             </div>
 
-            <p className="whitespace-pre-line px-6 py-5 text-sm leading-6 text-ink">
+            <p className={`whitespace-pre-line ${isEventManager ? "px-5 py-3.5" : "px-6 py-5"} text-sm leading-6 text-ink`}>
               {refusalReason}
             </p>
           </section>
         )}
 
-        <RidgeDivider className="divider mt-6" />
+        {!isEventManager && <RidgeDivider className="divider mt-6" />}
 
         {/* ---------------------------------------------- coordination info */}
-        <section className="glass p-6">
+        <section className={`glass ${isEventManager ? "mt-4 p-4 sm:p-5" : "p-6"}`}>
           <p className="eyebrow">Coordination</p>
-          <h2 className="h3 mt-1 border-b hairline pb-4 text-ink">Event Information</h2>
+          <h2 className={`h3 mt-1 border-b hairline ${isEventManager ? "pb-3" : "pb-4"} text-ink`}>Event Information</h2>
 
-          <dl className="mt-5 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {details.map((item) => (
-              <div key={item.label} className="flex items-start gap-3">
-                <span className="icon-tile h-9 w-9 rounded-xl">
+          <dl className={`${isEventManager ? "mt-4 gap-4 sm:gap-5" : "mt-5 gap-6"} grid sm:grid-cols-2 lg:grid-cols-3`}>
+            {coordinationDetails.map((item) => (
+              <div key={item.label} className="flex min-w-0 items-start gap-3">
+                <span className="icon-tile h-9 w-9 shrink-0 rounded-xl">
                   <item.Icon className="h-4 w-4" />
                 </span>
                 <div className="min-w-0">
                   <dt className="text-xs font-medium text-muted">{item.label}</dt>
-                  <dd className="mt-0.5 text-sm font-semibold text-ink">{item.value}</dd>
+                  <dd className="mt-0.5 whitespace-normal break-words text-sm font-semibold text-ink">{item.value}</dd>
                 </div>
               </div>
             ))}
@@ -573,18 +590,18 @@ function EventDetails() {
         </section>
 
         {/* ------------------------------------------------------ description */}
-        <section className="glass mt-6 overflow-hidden">
-          <div className="border-b hairline px-6 py-5">
+        <section className={`glass ${isEventManager ? "mt-4" : "mt-6"} overflow-hidden`}>
+          <div className={`border-b hairline ${isEventManager ? "px-5 py-3.5" : "px-6 py-5"}`}>
             <p className="eyebrow">Proposal</p>
             <h2 className="h3 mt-1 text-ink">Event Description</h2>
           </div>
-          <p className="prose-muted whitespace-pre-line px-6 py-5 text-sm">
+          <p className={`prose-muted whitespace-pre-line ${isEventManager ? "px-5 py-4" : "px-6 py-5"} text-sm`}>
             {cleanDescription || "No description provided."}
           </p>
         </section>
 
         {/* ------------------------------------------------------- the files */}
-        <div className="mt-6 space-y-6">
+        <div className={isEventManager ? "mt-4 space-y-4" : "mt-6 space-y-6"}>
           {/* Photos and videos in their own cards, every item shown; each
               opens the viewer, where images show full size and videos play. */}
           <EventMediaSections

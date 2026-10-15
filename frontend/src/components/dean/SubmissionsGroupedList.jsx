@@ -5,7 +5,7 @@ import Modal from "../teacher/Modal";
 import ProgressTimeline from "../teacher/ProgressTimeline";
 import { SubmitterLine } from "../common/submitter";
 import { apiJson } from "../../services/api";
-import readEventFields from "../../utils/eventFields";
+import readEventFields, { getEventDepartmentName } from "../../utils/eventFields";
 import { formatDateRange, formatTime12h } from "../../utils/dates";
 import {
   calculateGroupSelectionState,
@@ -711,15 +711,15 @@ export default function SubmissionsGroupedList({
               key={item.id}
               className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-line/60 bg-raised/20 p-4 transition hover:bg-raised/40"
             >
-              <div className="min-w-0 space-y-1">
+              <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-sm text-ink truncate">
                     {item.event_name}
                   </span>
                   <StatusChip status={item.status} size="sm" />
                 </div>
-                <p className="text-xs text-muted">
-                  {formatRowDate(item.event_date || item.start_date || item.created_at)} · {item.event_type || "Event"} · {readEventFields(item).department}
+                <p className="whitespace-normal break-words text-xs leading-5 text-muted">
+                  {formatRowDate(item.event_date || item.start_date || item.created_at)} · {item.event_type || "Event"} · {getEventDepartmentName(item)}
                 </p>
                 <div className="text-xs text-muted">
                   <SubmitterLine event={item} />
@@ -803,7 +803,7 @@ function SubmissionRow({
       {/* ------------------------------------------------
           PRIMARY ROW (Matches reference layout)
       ------------------------------------------------ */}
-      <div className="flex items-center gap-3 px-4 py-3 sm:gap-4 sm:px-5 min-w-fit sm:min-w-0">
+      <div className="grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 sm:gap-x-4 sm:px-5 xl:grid-cols-[auto_auto_minmax(0,1fr)_auto]">
         {/* 1. Checkbox */}
         <input
           type="checkbox"
@@ -829,80 +829,79 @@ function SubmissionRow({
         </button>
 
         {/* 3. Bold date + Workshop/Program title + secondary details */}
-        <div className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
-          <span className="whitespace-nowrap font-bold text-ink text-sm shrink-0">
-            {dateFormatted}
-          </span>
-
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+            <span className="shrink-0 whitespace-nowrap text-sm font-bold text-ink">
+              {dateFormatted}
+            </span>
             <button
               type="button"
-              className="min-w-0 truncate text-left font-semibold text-ink text-sm hover:text-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent rounded-sm"
+              className="min-w-0 max-w-full truncate text-left font-semibold text-ink text-sm hover:text-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent rounded-sm"
               onClick={onToggleExpand}
               aria-expanded={isExpanded}
               title={event.event_name}
             >
               {event.event_name}
             </button>
-
-            {/* Muted details line */}
-            <span className="hidden truncate text-xs text-muted md:inline">
-              · {event.event_type || "Program"} · {fields.department}
-            </span>
           </div>
+          <p className="mt-1 whitespace-normal break-words text-xs leading-5 text-muted">
+            {event.event_type || "Program"} · {getEventDepartmentName(event)}
+          </p>
         </div>
 
-        {/* Participant total from the API field or the legacy event metadata. */}
-        {participantCount != null && participantCount !== "" && (
-          <div className="shrink-0 inline-flex min-h-[2rem] items-center px-3 py-[0.35rem] font-display text-[0.78rem] font-medium tracking-[0.01em] text-ink whitespace-nowrap">
-            No. of Participants: {participantCount}
-          </div>
-        )}
+        <div className="col-span-3 flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-2 xl:col-span-1 xl:col-start-4 xl:row-start-1 xl:flex-nowrap">
+          {/* Participant total from the API field or the legacy event metadata. */}
+          {participantCount != null && participantCount !== "" && (
+            <div className="inline-flex min-h-[2rem] items-center py-[0.35rem] font-display text-[0.78rem] font-medium tracking-[0.01em] text-ink sm:shrink-0 sm:whitespace-nowrap">
+              No. of Participants: {participantCount}
+            </div>
+          )}
 
-        {/* Recorded is omitted from the row; other event statuses remain visible. */}
-        {!isRecorded && (
-          <div className="shrink-0">
-            <StatusChip status={event.status} size="sm" />
-          </div>
-        )}
+          {/* Recorded is omitted from the row; other event statuses remain visible. */}
+          {!isRecorded && (
+            <div className="shrink-0">
+              <StatusChip status={event.status} size="sm" />
+            </div>
+          )}
 
-        {/* 5. Right side action buttons */}
-        {renderRowActions ? (
-          <div className="flex shrink-0 items-center gap-1.5">
-            {renderRowActions(event, { isExpanded, isDownloading, canDownload })}
-          </div>
-        ) : (
-          <div className="flex shrink-0 items-center gap-2">
-            <Link
-              to={`/dean/events/${event.id}`}
-              className="btn btn-ghost btn-xs border border-line/80 font-medium text-ink hover:bg-raised/60 inline-flex items-center gap-1.5"
-              title="View submission details"
-            >
-              <IconEye className="h-3.5 w-3.5 text-muted" />
-              <span>View</span>
-            </Link>
+          {/* 5. Right side action buttons */}
+          {renderRowActions ? (
+            <div className="flex max-w-full flex-wrap items-center gap-1.5 xl:flex-nowrap">
+              {renderRowActions(event, { isExpanded, isDownloading, canDownload })}
+            </div>
+          ) : (
+            <div className="flex shrink-0 items-center gap-2">
+              <Link
+                to={`/dean/events/${event.id}`}
+                className="btn btn-ghost btn-xs border border-line/80 font-medium text-ink hover:bg-raised/60 inline-flex items-center gap-1.5"
+                title="View submission details"
+              >
+                <IconEye className="h-3.5 w-3.5 text-muted" />
+                <span>View</span>
+              </Link>
 
-            <button
-              type="button"
-              onClick={onDownloadSingle}
-              disabled={isDownloading || !reportCheck.canDownload}
-              className={`hidden sm:inline-flex btn btn-ghost btn-xs border border-line/80 font-medium ${
-                !reportCheck.canDownload
-                  ? "opacity-45 cursor-not-allowed text-muted"
-                  : "text-ink hover:bg-raised/60"
-              } items-center gap-1.5`}
-              title={reportCheck.reason || "Download report"}
-              aria-label={`Download report for ${event.event_name}`}
-            >
-              {isDownloading ? (
-                <span className="spin h-3.5 w-3.5" />
-              ) : (
-                <IconDownload className="h-3.5 w-3.5 text-muted" />
-              )}
-              <span>Report</span>
-            </button>
-          </div>
-        )}
+              <button
+                type="button"
+                onClick={onDownloadSingle}
+                disabled={isDownloading || !reportCheck.canDownload}
+                className={`hidden sm:inline-flex btn btn-ghost btn-xs border border-line/80 font-medium ${
+                  !reportCheck.canDownload
+                    ? "opacity-45 cursor-not-allowed text-muted"
+                    : "text-ink hover:bg-raised/60"
+                } items-center gap-1.5`}
+                title={reportCheck.reason || "Download report"}
+                aria-label={`Download report for ${event.event_name}`}
+              >
+                {isDownloading ? (
+                  <span className="spin h-3.5 w-3.5" />
+                ) : (
+                  <IconDownload className="h-3.5 w-3.5 text-muted" />
+                )}
+                <span>Report</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ------------------------------------------------
@@ -911,13 +910,13 @@ function SubmissionRow({
       {isExpanded && (
         <div className="border-t border-line/40 bg-raised/15 px-6 py-5 space-y-5 animate-in fade-in duration-150">
           {/* Header & Department */}
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-1">
+          <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
+            <div className="min-w-0 flex-1 space-y-1">
               <h4 className="font-display text-base font-bold text-ink">
                 {event.event_name}
               </h4>
-              <p className="text-xs text-muted">
-                Department: <span className="font-medium text-ink">{fields.department}</span>
+              <p className="whitespace-normal break-words text-xs leading-5 text-muted">
+                Department: <span className="font-medium text-ink">{getEventDepartmentName(event)}</span>
                 {fields.organizer ? ` · Organizer: ${fields.organizer}` : ""}
               </p>
             </div>

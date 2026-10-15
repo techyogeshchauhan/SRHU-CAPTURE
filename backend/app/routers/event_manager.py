@@ -1,19 +1,8 @@
-"""Event Manager role: the Teacher panel's event API, without the Dean.
+"""Event Manager submissions, Dean review and event reports.
 
-The Event Manager uses the Teacher panel's screens (frontend
-components/teacher/panel.jsx), so this router mirrors the teacher endpoints in
-routers/events.py path for path and response for response -- ``/event-manager``
-in place of ``/teacher`` -- with one difference: there is no review. Where a
-teacher's submission goes to the Dean as ``pending``, an Event Manager's is
-``recorded`` at once; nothing is announced to anyone, and a recorded event
-stays editable.
-
-On top of that, reports: one event, or several in one PDF, generated directly,
-with all chosen photos and a download link for every file.
-
-The events live in their own collections (`managed_events`,
-`managed_event_media`, `managed_event_documents`), so the teacher, Dean and
-superadmin flows never see them.
+Drafts become pending on submission. Dean decisions use the shared /dean
+endpoints; rejected events can be corrected and submitted again with PATCH.
+Existing recorded events remain readable without a data migration.
 """
 
 from __future__ import annotations
@@ -59,6 +48,10 @@ from app.routers.events import (
     _ensure_direct_upload_fits,
     _ensure_under_cap,
     _size_cap_error,
+    announce_to_deans,
+    conflict,
+    ensure_teacher_can_edit,
+    invalidate_report,
     paginate,
 )
 from app.schemas.event_manager import (
@@ -230,11 +223,10 @@ def create_event(payload: EventCreateRequest, user: dict = Depends(manager_dep))
     return {"success": True, "message": "Draft saved", "event": serialize(document)}
 
 
-@router.post("/events/bulk-record")
+@router.post("/events/bulk-record", deprecated=True)
+@router.post("/events/bulk-submit")
 def bulk_record_events(payload: BulkEventIdsRequest, user: dict = Depends(manager_dep)):
-    """Record the selected drafts in one request -- each with the checks the
-    form's Save runs (mandatory uploads, saved details still valid). A draft
-    that fails them is reported with the reason; the others are recorded."""
+    """Submit valid drafts for Dean review. /bulk-record is a compatibility alias."""
     wanted: list[ObjectId] = []
     results: list[dict] = []
     for value in payload.event_ids:
@@ -252,7 +244,7 @@ def bulk_record_events(payload: BulkEventIdsRequest, user: dict = Depends(manage
             continue
         row = {"event_id": str(object_id), "event_name": event.get("event_name")}
         if event.get("status") != "draft":
-            results.append({**row, "status": "skipped", "reason": "Already recorded."})
+            results.append({**row, "status": "skipped", "reason": "Already submitted."})
             continue
         try:
             _ensure_recordable(event)
@@ -267,27 +259,29 @@ def bulk_record_events(payload: BulkEventIdsRequest, user: dict = Depends(manage
         recorded = managed_events.find_one_and_update(
             {"_id": object_id, "owner_id": user["id"], "status": "draft"},
             {
-                "$set": {"status": RECORDED, "recorded_at": now, "updated_at": now},
+                "$set": {"status": "pending", "submitted_at": now, "updated_at": now},
                 "$push": {"history": new_history_entry(
-                    action=RECORDED, status=RECORDED, from_status="draft", actor=user,
+                    action="submitted", status="pending", from_status="draft", actor=user,
                 )},
             },
             return_document=True,
         )
         if recorded:
-            results.append({**row, "status": "recorded", "reason": None})
+            announce_to_deans(serialize(recorded), "submitted", user)
+            results.append({**row, "status": "submitted", "reason": None})
         else:
             results.append({**row, "status": "skipped", "reason": "This event changed meanwhile. Reload and try again."})
 
-    count = sum(1 for r in results if r["status"] == "recorded")
-    logger.info("managed_events_bulk_recorded count=%d owner=%s", count, user["id"])
+    count = sum(1 for r in results if r["status"] == "submitted")
+    logger.info("managed_events_bulk_submitted count=%d owner=%s", count, user["id"])
     return {
         "success": True,
         "requested_count": len(results),
+        "submitted_count": count,
         "recorded_count": count,
         "skipped_count": len(results) - count,
         "results": results,
-        "message": f"{count} event{'s' if count != 1 else ''} recorded.",
+        "message": f"{count} event{'s' if count != 1 else ''} submitted for approval.",
     }
 
 
@@ -357,9 +351,15 @@ def get_event(event_id: str, request: Request, user: dict = Depends(manager_dep)
 
 @router.patch("/events/{event_id}")
 def update_event(event_id: str, payload: EventUpdateRequest, user: dict = Depends(manager_dep)):
-    """Save a draft (`save_as_draft`), or save the event: recorded at once."""
+    """Save a draft, or submit corrected details for Dean review.
+
+    Submission sets pending and clears the current refusal. The rejection
+    remark remains in history. Approved events cannot be edited or resubmitted.
+    """
     event = _own_event_or_404(event_id, user)
     previous = event.get("status")
+    if previous != RECORDED:
+        ensure_teacher_can_edit(event)
 
     if payload.save_as_draft and previous != "draft":
         raise HTTPException(
@@ -373,26 +373,39 @@ def update_event(event_id: str, payload: EventUpdateRequest, user: dict = Depend
         changes["status"] = "draft"
     else:
         _ensure_recordable(event)
-        changes["status"] = RECORDED
-        if previous != RECORDED:
-            changes["recorded_at"] = utc_now()
+        changes.update({
+            "status": "pending",
+            "submitted_at": utc_now(),
+            "rejection_reason": None,
+            "revocation_reason": None,
+            "revoked_at": None,
+            "reviewed_at": None,
+            "report_generated_at": None,
+        })
+        action = "submitted" if previous == "draft" else (
+            "resubmitted" if previous in ("rejected", "revoked") else "updated"
+        )
         update["$push"] = {
             "history": new_history_entry(
-                action=RECORDED if previous != RECORDED else "updated",
-                status=RECORDED,
+                action=action,
+                status="pending",
                 from_status=previous,
                 actor=user,
             )
         }
 
     updated = managed_events.find_one_and_update(
-        {"_id": event["_id"], "owner_id": user["id"]}, update, return_document=True
+        {"_id": event["_id"], "owner_id": user["id"], "status": previous}, update, return_document=True
     )
     if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+        _own_event_or_404(event_id, user)
+        raise conflict("This event changed while you were editing it. Please reload and try again.")
+    if not payload.save_as_draft:
+        invalidate_report(event_id)
+        announce_to_deans(serialize(updated), action, user)
     return {
         "success": True,
-        "message": "Draft saved" if payload.save_as_draft else "Event saved",
+        "message": "Draft saved" if payload.save_as_draft else "Event submitted for Dean approval",
         "event": serialize(updated),
     }
 
@@ -585,7 +598,7 @@ def _delete_file(collection, record_id: str, event: dict, not_found: str) -> dic
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found)
 
-    if event.get("status") == RECORDED:
+    if event.get("status") in (RECORDED, "pending", "submitted", "under_review", "approved"):
         label = "document" if collection is managed_event_documents else (
             "photo" if record.get("media_type") == "image" else "video"
         )

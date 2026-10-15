@@ -5,10 +5,8 @@
  *
  *   base      where the panel's own pages live ("/teacher/dashboard" ...)
  *   api       where its event API lives ("/teacher/events" ...)
- *   approval  whether events go to the Dean for review. The Event Manager
- *             has no Dean workflow: a submitted event is recorded at once,
- *             and every approval screen element (status tracker, Dean
- *             remarks, resubmit) is left out.
+ *   approval  whether events go to the Dean for review. Both roles submit
+ *             for approval and can correct and resubmit rejected events.
  *   reports   whether the panel generates event reports itself.
  *
  * Nothing wraps the teacher routes, so they get TEACHER_PANEL by default and
@@ -30,6 +28,6 @@ export const EVENT_MANAGER_PANEL = {
   api: "/event-manager",
   label: "Event Manager Panel",
   roleLabel: "Event Manager",
-  approval: false,
+  approval: true,
   reports: true,
 };
