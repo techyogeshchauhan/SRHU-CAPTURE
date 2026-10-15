@@ -528,7 +528,7 @@ export default function SubmissionsGroupedList({
                               Rendered when month is expanded (current year's months expanded by default)
                           */}
                           {isMonthExpanded && (
-                            <div className="overflow-hidden rounded-xl border border-line/60 bg-surface shadow-xs divide-y divide-line/30">
+                            <div className="overflow-x-auto rounded-xl border border-line/60 bg-surface shadow-xs divide-y divide-line/30">
                               {monthGroup.items.map((event) => (
                                 <SubmissionRow
                                   key={event.id}
@@ -587,7 +587,7 @@ export default function SubmissionsGroupedList({
                   </div>
                 </div>
 
-                <div className="overflow-hidden rounded-xl border border-line/60 bg-surface shadow-xs divide-y divide-line/30">
+                <div className="overflow-x-auto rounded-xl border border-line/60 bg-surface shadow-xs divide-y divide-line/30">
                   {group.items.map((event) => (
                     <SubmissionRow
                       key={event.id}
@@ -790,8 +790,7 @@ function SubmissionRow({
     event.expected_participants,
     fields.expectedParticipants,
   ].find((value) => value != null && String(value).trim() !== "");
-  const participantLabel =
-    actualParticipantCount == null ? "Expected participants" : "Participants";
+  const participantLabel = "No. of Participants";
   const isRecorded = String(event.status || "").toLowerCase() === "recorded";
   const dateFormatted = formatRowDate(
     event.event_date || event.start_date || event.created_at
@@ -804,7 +803,7 @@ function SubmissionRow({
       {/* ------------------------------------------------
           PRIMARY ROW (Matches reference layout)
       ------------------------------------------------ */}
-      <div className="flex items-center gap-3 px-4 py-3 sm:gap-4 sm:px-5">
+      <div className="flex items-center gap-3 px-4 py-3 sm:gap-4 sm:px-5 min-w-fit sm:min-w-0">
         {/* 1. Checkbox */}
         <input
           type="checkbox"
@@ -820,7 +819,7 @@ function SubmissionRow({
           onClick={onToggleExpand}
           aria-expanded={isExpanded}
           aria-label={`Toggle full details for ${event.event_name}`}
-          className="p-1 text-muted transition-transform duration-200 hover:text-ink focus:outline-none focus:ring-1 focus:ring-accent rounded-sm"
+          className="p-1 text-muted transition-transform duration-200 hover:text-ink focus:outline-none focus:ring-1 focus:ring-accent rounded-sm shrink-0"
         >
           {isExpanded ? (
             <IconChevronDown className="h-4 w-4 text-ink" />
@@ -831,7 +830,7 @@ function SubmissionRow({
 
         {/* 3. Bold date + Workshop/Program title + secondary details */}
         <div className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
-          <span className="whitespace-nowrap font-bold text-ink text-sm">
+          <span className="whitespace-nowrap font-bold text-ink text-sm shrink-0">
             {dateFormatted}
           </span>
 
@@ -856,7 +855,7 @@ function SubmissionRow({
         {/* Participant total from the API field or the legacy event metadata. */}
         {participantCount != null && participantCount !== "" && (
           <div className="shrink-0 inline-flex min-h-[2rem] items-center px-3 py-[0.35rem] font-display text-[0.78rem] font-medium tracking-[0.01em] text-ink whitespace-nowrap">
-            Participants: {participantCount}
+            No. of Participants: {participantCount}
           </div>
         )}
 

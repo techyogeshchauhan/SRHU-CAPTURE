@@ -1582,7 +1582,7 @@ function CreateEvent() {
 
               <div className="field col-span-2">
                 <label htmlFor="expectedParticipants">
-                  Expected Participants
+                  No. of Participants
                   <span className="ml-2 font-normal text-muted">(Optional)</span>
                 </label>
                 <input

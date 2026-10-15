@@ -83,7 +83,7 @@ function EventSummary({
           />
           <Row label="Venue" value={event.location} />
           <Row label="Department" value={fields.department} />
-          <Row label="Expected participants" value={fields.expectedParticipants} />
+          <Row label="No. of Participants" value={fields.expectedParticipants} />
           <Row label="Organizer" value={fields.organizer} />
           <Row label="Contact number" value={fields.contactInfo} />
           <Row label="Social network link" value={event.socialNetworkUrl} />

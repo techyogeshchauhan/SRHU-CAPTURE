@@ -101,7 +101,7 @@ export default function ReportCustomizationModal({
     {
       key: "include_other_info",
       title: "Participation & Social Links",
-      description: "Expected participant count and published social media links.",
+      description: "No. of Participants and published social media links.",
       Icon: IconUsers,
     },
     {

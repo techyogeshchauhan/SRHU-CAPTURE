@@ -674,7 +674,7 @@ function EventDetails() {
       Icon: IconBuilding,
     },
     {
-      label: "Expected participants",
+      label: "No. of Participants",
       value: meta.expectedParticipants || "",
       Icon: IconUsers,
     },

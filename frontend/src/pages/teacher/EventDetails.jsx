@@ -315,7 +315,7 @@ function EventDetails() {
       value: meta.contactInfo || profile?.email || "Not specified",
     },
     ...(meta.expectedParticipants
-      ? [{ Icon: IconUsers, label: "Expected Participants", value: meta.expectedParticipants }]
+      ? [{ Icon: IconUsers, label: "No. of Participants", value: meta.expectedParticipants }]
       : []),
   ];
 
