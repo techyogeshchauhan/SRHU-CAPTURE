@@ -93,21 +93,23 @@ function EventTypeSelect({
 
       {error && <p className="field-error">{error}</p>}
 
-      <button
-        type="button"
-        onClick={() => {
-          setNewLabel("");
-          setAddError("");
-          setAddOpen(true);
-        }}
-        disabled={disabled}
-        className="btn btn-ghost btn-xs mt-1 self-start"
-      >
-        + Add event type
-      </button>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setNewLabel("");
+            setAddError("");
+            setAddOpen(true);
+          }}
+          disabled={disabled}
+          className="btn btn-ghost btn-xs"
+        >
+          + Add event type
+        </button>
 
-      {canManageTypes && <button type="button" className="btn btn-ghost btn-xs mt-1 self-start"
-        disabled={disabled} onClick={() => setManageOpen(true)}>Manage event types</button>}
+        {canManageTypes && <button type="button" className="btn btn-ghost btn-xs"
+          disabled={disabled} onClick={() => setManageOpen(true)}>Manage event types</button>}
+      </div>
       {manageOpen && <ManageEventTypesModal onClose={() => setManageOpen(false)} onChanged={(result) => {
         const current = (value === "Other" ? customValue : value) || "";
         if (result.previous_names.some((name) => name.toLowerCase() === current.toLowerCase())) {
