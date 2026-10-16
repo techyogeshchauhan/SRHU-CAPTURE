@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap');
 @import "tailwindcss";
+@import "./styles/panelTypography.css";
 
 /* ============================================================================
    HIMOVATION theme — Campus Capture
@@ -1568,6 +1569,15 @@ input::-ms-clear {
     to { transform: none; opacity: 1; }
   }
 
+  .modal-panel.album-panel,
+  .modal-panel-xl {
+    width: 96vw;
+    max-width: 96vw;
+    height: 92vh;
+    max-height: 92vh;
+    border-radius: 1.25rem;
+  }
+
   @media (min-width: 640px) {
     .hv-backdrop {
       align-items: center;
@@ -1582,6 +1592,15 @@ input::-ms-clear {
 
     .modal-panel-lg {
       max-width: 46rem;
+    }
+
+    .modal-panel.album-panel,
+    .modal-panel-xl {
+      width: 90vw;
+      max-width: 1440px;
+      height: 88vh;
+      max-height: 88vh;
+      border-radius: 1.5rem;
     }
   }
 

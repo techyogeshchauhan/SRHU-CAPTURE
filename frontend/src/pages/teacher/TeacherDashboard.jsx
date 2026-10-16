@@ -15,6 +15,9 @@ import { usePanel } from "../../components/teacher/panel";
 import { downloadEventReport } from "../../services/eventManager";
 import PageHero from "../../components/teacher/PageHero";
 import Modal from "../../components/teacher/Modal";
+import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
+import EventReportButton from "../../components/common/EventReportButton";
+import { eventReportRestriction } from "../../utils/eventReportEligibility";
 import Lifecycle from "../../components/teacher/Lifecycle";
 import StatusChip from "../../components/teacher/StatusChip";
 import StatCard from "../../components/common/StatCard";
@@ -31,7 +34,6 @@ import {
   IconCheckCircle,
   IconClock,
   IconCopy,
-  IconDownload,
   IconEdit,
   IconEye,
   IconInbox,
@@ -51,6 +53,7 @@ function TeacherDashboard() {
 
   const [profile, setProfile] = useState(null);
   const [events, setEvents] = useState([]);
+  const [dashboard, setDashboard] = useState(null);
   const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -81,12 +84,13 @@ function TeacherDashboard() {
       setProfile(userProfile);
 
       // Fetch teacher's events from the API (MongoDB)
-      const { events: teacherEvents } = await apiJson(`${panel.api}/events`);
+      const { events: teacherEvents, dashboard: summary } = await apiJson(`${panel.api}/events?dashboard=true`);
 
       // Fetch teacher's local drafts
       const teacherDrafts = getTeacherDrafts(userProfile.id);
 
       setEvents(teacherEvents || []);
+      setDashboard(summary || null);
       setDrafts(teacherDrafts || []);
     } catch (error) {
       console.error("Dashboard error:", error);
@@ -148,12 +152,12 @@ function TeacherDashboard() {
   };
 
   // Summary counts
-  const totalEvents = events.length + drafts.length;
-  const pendingEvents = events.filter((event) => isPendingStatus(event.status)).length;
-  const approvedEvents = events.filter((event) => isApprovedStatus(event.status)).length;
+  const totalEvents = (dashboard?.all ?? events.length) + drafts.length;
+  const pendingEvents = dashboard?.pending ?? events.filter((event) => isPendingStatus(event.status)).length;
+  const approvedEvents = dashboard?.approved ?? events.filter((event) => isApprovedStatus(event.status)).length;
   // Revoked belongs here: it is the Dean refusing the event, and leaving it
   // out meant a revoked event was in total_events and in no tile at all.
-  const rejectedEvents = events.filter((event) => isRefusedStatus(event.status)).length;
+  const rejectedEvents = dashboard?.rejected ?? events.filter((event) => isRefusedStatus(event.status)).length;
 
   // Combine and sort recent events
   const recentCombinedList = [
@@ -165,7 +169,7 @@ function TeacherDashboard() {
     return timeB - timeA;
   });
 
-  const recordedEvents = events.filter((event) => event.status === "recorded").length;
+  const recordedEvents = dashboard?.recorded ?? events.filter((event) => event.status === "recorded").length;
 
   // Without a Dean there is nothing pending, approved or rejected: an Event
   // Manager's events are either saved (recorded) or still drafts.
@@ -189,7 +193,7 @@ function TeacherDashboard() {
     {
       key: "draft",
       label: "Drafts",
-      value: drafts.length + events.filter((event) => event.status === "draft").length,
+      value: drafts.length + (dashboard?.draft ?? events.filter((event) => event.status === "draft").length),
       hint: "View drafts",
       track: trackOf("draft"),
       Icon: IconClock,
@@ -602,6 +606,22 @@ const NotSet = () => <span className="italic text-muted/70">Not set</span>;
 function RowActions({ item, onDuplicate, onDelete, onTrack, originState }) {
   const panel = usePanel();
   const [reporting, setReporting] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const generateReport = async (options) => {
+    const reason = eventReportRestriction(item);
+    if (reason) { setReportError(reason); return; }
+    setReporting(true);
+    setReportError("");
+    try {
+      await downloadEventReport(item.id, item.event_name, options);
+      setShowReportModal(false);
+    } catch (err) {
+      setReportError(err?.message || "Could not generate the report.");
+    } finally {
+      setReporting(false);
+    }
+  };
   // Editable until the Dean approves it; mirrors TEACHER_EDITABLE_STATUSES in
   // backend/app/models/documents.py (the server enforces it).
   const canEdit = item.isDraft || canTeacherEditEvent(item);
@@ -688,27 +708,24 @@ function RowActions({ item, onDuplicate, onDelete, onTrack, originState }) {
           <IconActivity />
         </button>
       )}
-      {panel.reports && !item.isDraft && isApprovedStatus(item.status) && (
-          <button
-            type="button"
-            onClick={async () => {
-              setReporting(true);
-              try {
-                await downloadEventReport(item.id, item.event_name);
-              } catch (err) {
-                alert(err?.message || "Could not generate the report.");
-              } finally {
-                setReporting(false);
-              }
-            }}
-            disabled={reporting}
-            title="Download report"
-            aria-label="Download report"
-            className="icon-btn icon-btn-sm hover:border-accent/60 hover:text-accent"
-          >
-            {reporting ? <span className="spin h-3.5 w-3.5" /> : <IconDownload />}
-          </button>
+      {panel.reports && (
+          <EventReportButton
+            event={item}
+            onClick={() => { const reason = eventReportRestriction(item); if (reason) { setReportError(reason); return; } setReportError(""); setShowReportModal(true); }}
+            generating={reporting}
+            className="btn btn-ghost btn-xs"
+          />
       )}
+      <ReportCustomizationModal
+        open={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        onGenerate={generateReport}
+        generating={reporting}
+        eventIds={[item.id]}
+        eventName={item.event_name}
+        apiBase={panel.api}
+        error={reportError}
+      />
     </>
   );
 }

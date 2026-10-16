@@ -179,7 +179,7 @@ export default function NotificationBell({ currentUser, onNew }) {
 
   /* ---- Teachers: event-day reminders, once per visit ---- */
   useEffect(() => {
-    if (!userId || role !== "teacher") return undefined;
+    if (!userId || currentUser?.role !== "teacher") return undefined;
     const last = lastReminderCheck.get(userId) || 0;
     if (Date.now() - last < REMINDER_RECHECK_MS) return undefined;
     let cancelled = false;
@@ -187,7 +187,7 @@ export default function NotificationBell({ currentUser, onNew }) {
     (async () => {
       try {
         const [{ events = [] } = {}, existing] = await Promise.all([
-          apiJson("/teacher/events"),
+          apiJson("/teacher/events?reminders=true"),
           fetchNotifications(userId),
         ]);
         if (cancelled) return;
@@ -209,7 +209,7 @@ export default function NotificationBell({ currentUser, onNew }) {
     return () => {
       cancelled = true;
     };
-  }, [userId, role]);
+  }, [userId, currentUser?.role]);
 
   /* ---- Toasts clear themselves ---- */
   useEffect(() => {

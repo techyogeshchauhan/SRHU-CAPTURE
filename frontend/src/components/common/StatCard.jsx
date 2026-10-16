@@ -9,20 +9,21 @@ import { IconArrowRight } from "../teacher/icons";
  *
  * `track` is the hex the count, icon tile and top edge are tinted from, the
  * same `--track` convention the status chips use.
+ * `compact` reduces padding and the icon tile while retaining the type scale.
  */
-export default function StatCard({ label, value, Icon, track, hint, to, index = 0 }) {
+export default function StatCard({ label, value, Icon, track, hint, to, index = 0, compact = false }) {
   const Tag = to ? Link : "div";
 
   return (
     <Tag
       to={to}
       style={{ "--track": track, "--i": index + 1 }}
-      className={`stat-card reveal group rounded-2xl p-3.5 sm:p-4 ${to ? "" : "is-static"}`}
+      className={`stat-card reveal group rounded-2xl ${compact ? "p-3 sm:p-3.5" : "p-3.5 sm:p-4"} ${to ? "" : "is-static"}`}
     >
       <div className="relative flex items-center justify-between gap-2">
         <p className="truncate text-xs font-medium text-muted sm:text-sm">{label}</p>
         {Icon && (
-          <span className="icon-tile icon-tile-track h-8 w-8 shrink-0 rounded-lg [&>svg]:h-4 [&>svg]:w-4">
+          <span className={`icon-tile icon-tile-track ${compact ? "h-7 w-7" : "h-8 w-8"} shrink-0 rounded-lg [&>svg]:h-4 [&>svg]:w-4`}>
             <Icon />
           </span>
         )}

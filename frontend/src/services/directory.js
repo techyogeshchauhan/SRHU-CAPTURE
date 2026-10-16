@@ -25,6 +25,14 @@ export const FALLBACK_EVENT_TYPES = [
 // Shared across every component that mounts at once (the wizard and the Dean
 // filters), so the list is fetched once per page rather than per consumer.
 let inFlight = null;
+export const EVENT_TYPES_CHANGED = "campus:event-types-changed";
+
+function refreshEventTypes(data) {
+  const names = data?.event_types || [];
+  inFlight = Promise.resolve(names);
+  window.dispatchEvent(new CustomEvent(EVENT_TYPES_CHANGED, { detail: names }));
+  return data;
+}
 
 export async function listEventTypes({ force = false } = {}) {
   if (force) inFlight = null;
@@ -44,8 +52,28 @@ export async function createEventType(name) {
     method: "POST",
     body: JSON.stringify({ name }),
   });
-  inFlight = Promise.resolve(data?.event_types || []);
-  return data;
+  return refreshEventTypes(data);
+}
+
+export async function listManageableEventTypes() {
+  const data = await apiJson("/event-types/manage");
+  return data.event_types;
+}
+
+export function getEventTypeUsage(id) {
+  return apiJson(`/event-types/${encodeURIComponent(id)}/usage`);
+}
+
+export async function renameEventType(id, name) {
+  return refreshEventTypes(await apiJson(`/event-types/${encodeURIComponent(id)}`, {
+    method: "PATCH", body: JSON.stringify({ name }),
+  }));
+}
+
+export async function deleteEventType(id, destinationId) {
+  return refreshEventTypes(await apiJson(`/event-types/${encodeURIComponent(id)}`, {
+    method: "DELETE", body: JSON.stringify({ destination_id: destinationId }),
+  }));
 }
 
 export async function listFacultyCoordinators(query = "") {

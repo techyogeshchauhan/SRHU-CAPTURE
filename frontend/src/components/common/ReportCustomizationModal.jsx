@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { loadReportSections } from "../../services/reportSections";
+import { availableReportOptions, reportSectionAvailability, reportSectionOptions } from "../../utils/reportSections";
+import { APPROVAL_REPORT_MESSAGE, DRAFT_REPORT_MESSAGE } from "../../utils/eventReportEligibility";
 import Modal from "../teacher/Modal";
 import {
   IconCalendar,
@@ -16,67 +19,66 @@ import {
  * Allows Dean and Event Manager to customize what information is included in
  * the final PDF report before generating and downloading it.
  */
-export default function ReportCustomizationModal({
-  open,
+export default function ReportCustomizationModal({ open, ...props }) {
+  return open ? <ReportCustomizationContents {...props} /> : null;
+}
+
+function ReportCustomizationContents({
   onClose,
   onGenerate,
   generating = false,
   eventName = "",
-  photoCount = null,
-  documentCount = null,
-  noticeCount = null,
-  attachmentCount = null,
+  eventIds = [],
+  apiBase = "/event-manager",
+  error = "",
   isConsolidated = false,
   eventCount = 1,
 }) {
-  const [options, setOptions] = useState({
-    include_basic_details: true,
-    include_schedule_venue: true,
-    include_description: true,
-    include_other_info: true,
-    include_photos: true,
-    include_notices: true,
-    include_reports: true,
-  });
+  const [options, setOptions] = useState(reportSectionOptions);
+  const [data, setData] = useState(null);
+  const [loadError, setLoadError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const idsKey = JSON.stringify(eventIds);
+  useEffect(() => {
+    const controller = new AbortController();
+    const ids = JSON.parse(idsKey);
+    loadReportSections(ids, apiBase, controller.signal).then((entries) => {
+      if (!controller.signal.aborted) setData(entries);
+    }).catch((err) => {
+      if (!controller.signal.aborted) setLoadError(err?.message || "Could not load report sections.");
+    });
+    return () => controller.abort();
+  }, [idsKey, apiBase, attempt]);
+
+  const { available, counts } = reportSectionAvailability(data || [], options);
+  const fullAvailability = reportSectionAvailability(data || []);
+  const selected = availableReportOptions(options, available);
+  const photoCount = counts.photos;
+  const noticeCount = counts.notices;
+  const attachmentCount = counts.attachments;
+  const loading = !data && !loadError;
+  const approvalBlocked = apiBase === "/event-manager" && [APPROVAL_REPORT_MESSAGE, DRAFT_REPORT_MESSAGE].includes(error);
 
   const toggleOption = (key) => {
+    if (!available[key] || generating || loading || loadError || approvalBlocked) return;
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const handleSelectAll = () => {
-    setOptions({
-      include_basic_details: true,
-      include_schedule_venue: true,
-      include_description: true,
-      include_other_info: true,
-      include_photos: true,
-      include_notices: true,
-      include_reports: true,
-    });
+    setOptions(reportSectionOptions());
   };
 
   const handleDeselectAll = () => {
-    setOptions({
-      include_basic_details: false,
-      include_schedule_venue: false,
-      include_description: false,
-      include_other_info: false,
-      include_photos: false,
-      include_notices: false,
-      include_reports: false,
-    });
+    setOptions(reportSectionOptions(false));
   };
 
-  const selectedCount = Object.values(options).filter(Boolean).length;
-  const canGenerate = selectedCount > 0 && !generating;
+  const selectedCount = Object.entries(selected).filter(([key, value]) => key !== "include_documents" && value).length;
+  const allAvailableSelected = Object.entries(fullAvailability.available).every(([key, value]) => !value || selected[key]);
+  const canGenerate = selectedCount > 0 && !generating && !loading && !loadError && !approvalBlocked;
 
   const handleConfirm = async () => {
     if (!canGenerate) return;
-    const payload = {
-      ...options,
-      include_documents: Boolean(options.include_notices || options.include_reports),
-    };
-    await onGenerate(payload);
+    await onGenerate(selected);
   };
 
   const sections = [
@@ -129,7 +131,7 @@ export default function ReportCustomizationModal({
 
   return (
     <Modal
-      open={open}
+      open
       onClose={generating ? undefined : onClose}
       eyebrow="Report Customization"
       title={isConsolidated ? `Customize Consolidated Report (${eventCount} Events)` : "Customize Event Report"}
@@ -168,6 +170,15 @@ export default function ReportCustomizationModal({
       }
     >
       <div className="space-y-4">
+        {isConsolidated && <p className="prose-muted text-xs">A section is available when at least one selected event has data. The PDF includes it only for events that supplied that data.</p>}
+        {loading && <p role="status" className="prose-muted text-sm">Checking available report sections…</p>}
+        {loadError && (
+          <div role="alert" className="rounded-lg border border-err/20 bg-err/10 p-3 text-sm text-err">
+            <p>{loadError}</p>
+            <button type="button" className="btn btn-ghost btn-xs mt-2" onClick={() => { setLoadError(""); setAttempt((value) => value + 1); }}>Retry</button>
+          </div>
+        )}
+        {error && <p role="alert" className="text-sm text-err">{error}</p>}
         {/* Presets and quick count */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-b hairline pb-3">
           <p className="text-xs font-medium text-ink">
@@ -177,7 +188,7 @@ export default function ReportCustomizationModal({
             <button
               type="button"
               onClick={handleSelectAll}
-              disabled={generating || selectedCount === sections.length}
+              disabled={generating || loading || Boolean(loadError) || approvalBlocked || allAvailableSelected}
               className="text-xs text-accent hover:underline disabled:opacity-40 disabled:no-underline font-medium"
             >
               Select All
@@ -186,7 +197,7 @@ export default function ReportCustomizationModal({
             <button
               type="button"
               onClick={handleDeselectAll}
-              disabled={generating || selectedCount === 0}
+              disabled={generating || loading || Boolean(loadError) || approvalBlocked || selectedCount === 0}
               className="text-xs text-muted hover:text-ink hover:underline disabled:opacity-40 disabled:no-underline"
             >
               Deselect All
@@ -197,21 +208,23 @@ export default function ReportCustomizationModal({
         {/* Section Cards */}
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           {sections.map(({ key, title, description, Icon, badge }) => {
-            const checked = options[key];
+            const checked = selected[key];
+            const disabled = generating || loading || Boolean(loadError) || approvalBlocked || !available[key];
             return (
               <label
                 key={key}
-                className={`relative flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors select-none ${
-                  checked
+                className={`relative flex items-start gap-3 rounded-xl border p-3.5 transition-colors select-none ${disabled ? "cursor-not-allowed" : "cursor-pointer"} ${
+                  !available[key] ? "border-line/60 bg-raised/20 opacity-60" : checked
                     ? "border-accent/40 bg-accent/[0.04] shadow-xs"
                     : "border-line/60 bg-surface/30 opacity-70 hover:opacity-100 hover:border-line"
                 }`}
               >
                 <input
                   type="checkbox"
+                  aria-label={title}
                   checked={checked}
                   onChange={() => toggleOption(key)}
-                  disabled={generating}
+                  disabled={disabled}
                   className="mt-0.5 h-4 w-4 rounded border-line text-accent focus:ring-accent"
                 />
 
@@ -224,7 +237,7 @@ export default function ReportCustomizationModal({
                     >
                       <Icon className="h-3.5 w-3.5" />
                     </span>
-                    <span className="text-xs font-semibold text-ink line-clamp-1">
+                    <span className="text-sm font-semibold text-ink">
                       {title}
                     </span>
                   </div>
@@ -240,13 +253,18 @@ export default function ReportCustomizationModal({
                       </span>
                     </div>
                   )}
+                  {!loading && !loadError && !available[key] && (
+                    <p className="mt-2 text-xs text-muted">{key === "include_reports" && !options.include_photos && fullAvailability.counts.attachments > 0
+                      ? "Select Photographs & Images to include photo links."
+                      : key === "include_photos" ? "No photographs selected for this report." : "No data provided for this section."}</p>
+                  )}
                 </div>
               </label>
             );
           })}
         </div>
 
-        {selectedCount === 0 && (
+        {!loading && !loadError && selectedCount === 0 && (
           <div className="rounded-lg bg-err/10 border border-err/20 px-3.5 py-2.5 text-xs text-err" role="alert">
             Please select at least one section to include in the report.
           </div>

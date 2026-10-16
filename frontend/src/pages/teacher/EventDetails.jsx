@@ -16,6 +16,8 @@ import { downloadEventReport, reportNotice, saveReportPhotos } from "../../servi
 import PageHero from "../../components/teacher/PageHero";
 import Modal from "../../components/teacher/Modal";
 import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
+import EventReportButton from "../../components/common/EventReportButton";
+import { eventReportRestriction } from "../../utils/eventReportEligibility";
 import Lifecycle from "../../components/teacher/Lifecycle";
 import ProgressTimeline from "../../components/teacher/ProgressTimeline";
 import EventMediaSections from "../../components/common/EventMediaSections";
@@ -204,10 +206,15 @@ function EventDetails() {
   };
 
   const handleDownloadReport = () => {
+    const reason = eventReportRestriction(event);
+    if (reason) { setReportError(reason); return; }
+    setReportError("");
     setShowReportModal(true);
   };
 
   const handleExecuteReport = async (customization) => {
+    const reason = eventReportRestriction(event);
+    if (reason) { setReportError(reason); return; }
     try {
       setReporting(true);
       setReportError("");
@@ -367,16 +374,13 @@ function EventDetails() {
                 Track Status
               </button>
             )}
-            {panel.reports && isApprovedStatus(event.status) && (
-                <button
-                  type="button"
+            {panel.reports && (
+                <EventReportButton
+                  event={event}
                   onClick={handleDownloadReport}
-                  disabled={reporting}
+                  generating={reporting}
                   className="btn btn-primary btn-xs"
-                >
-                  {reporting ? <span className="spin h-3 w-3" /> : <IconDownload />}
-                  Download Report
-                </button>
+                />
             )}
 
             <button
@@ -427,6 +431,7 @@ function EventDetails() {
 
         {/* -------------------------------------------------------- the hero */}
         <PageHero
+          compactTitle={isEventManager}
           eyebrow={event.event_type}
           title={event.event_name}
           subtitle={`Organized by ${meta.organizer || profile?.name || panel.roleLabel}`}
@@ -724,10 +729,9 @@ function EventDetails() {
         onGenerate={handleExecuteReport}
         generating={reporting}
         eventName={event?.event_name}
-        photoCount={media?.filter((m) => m.media_type === "image").length}
-        documentCount={documents?.length}
-        noticeCount={documents?.filter((d) => d.category !== "report").length}
-        attachmentCount={(documents?.filter((d) => d.category === "report").length || 0) + (media?.length || 0)}
+        eventIds={event ? [event.id] : []}
+        apiBase={panel.api}
+        error={reportError}
       />
     </TeacherShell>
   );

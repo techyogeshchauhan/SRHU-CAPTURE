@@ -160,9 +160,13 @@ class UploadLimitsApiTests(UploadLimitsTestCase):
         bounds = data["bounds"]
         # Every numeric limit; the *_required switches are booleans with no range.
         self.assertEqual(
-            set(bounds), set(DEFAULT_UPLOAD_LIMITS) - set(REQUIREMENT_FIELDS.values())
+            set(bounds),
+            set(DEFAULT_UPLOAD_LIMITS) - set(REQUIREMENT_FIELDS.values()) - {"research_evidence_required"},
         )
         self.assertEqual(bounds["max_photos_per_event"], {"min": 1, "max": 100, "unit": "count"})
+        self.assertIs(data["limits"]["research_evidence_required"], False)
+        self.assertEqual(bounds["max_research_evidence_files"], {"min": 1, "max": 20, "unit": "count"})
+        self.assertEqual(bounds["max_research_evidence_total_mb"], {"min": 1, "max": 100, "unit": "mb"})
 
 
 class UploadLimitsAuthOrderingTests(UploadLimitsTestCase):

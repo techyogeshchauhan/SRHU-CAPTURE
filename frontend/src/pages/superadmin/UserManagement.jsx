@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { copyText } from "../../utils/clipboard";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { apiJson } from "../../services/api";
+import { apiJson, isAbortError } from "../../services/api";
+import useLatestRead from "../../hooks/useLatestRead";
 import { useAuth } from "../../context/AuthContext";
 import SuperAdminShell from "../../components/superadmin/SuperAdminShell";
 import PageHero from "../../components/teacher/PageHero";
@@ -9,7 +10,7 @@ import Modal from "../../components/teacher/Modal";
 import RoleChip from "../../components/common/RoleChip";
 import Pagination from "../../components/common/Pagination";
 import { ROLE_TRACK, initialsOf, normalizeRole, trackOfRole } from "../../components/common/roles";
-import BulkTeacherOnboardModal from "../../components/superadmin/BulkTeacherOnboardModal";
+const BulkTeacherOnboardModal = lazy(() => import("../../components/superadmin/BulkTeacherOnboardModal"));
 import {
   IconAlertTriangle,
   IconAward,
@@ -129,6 +130,7 @@ const ACTIONS = {
 };
 
 function UserManagement() {
+  const beginRead = useLatestRead();
   const navigate = useNavigate();
   const { profile, signOut } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -214,6 +216,7 @@ function UserManagement() {
 
   // ------------------------------------------------------------ load
   const loadUsers = useCallback(async () => {
+    const controller = beginRead();
     try {
       setLoading(true);
       setError("");
@@ -229,13 +232,15 @@ function UserManagement() {
         params.set("q", urlQ);
       }
 
-      const data = await apiJson(`/superadmin/users?${params}`);
+      const data = await apiJson(`/superadmin/users?${params}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       setUsers(data?.users || []);
       setTotal(data?.total || 0);
       if (data?.counts) {
         setCounts(data.counts);
       }
     } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) return;
       if (err?.status === 401) {
         handleUnauthorized();
         return;
@@ -243,9 +248,9 @@ function UserManagement() {
       console.error("Load users error:", err);
       setError(err.message || "Failed to load users");
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  }, [skip, per, roleFilter, urlQ, handleUnauthorized]);
+  }, [skip, per, roleFilter, urlQ, handleUnauthorized, beginRead]);
 
   useEffect(() => {
     loadUsers();
@@ -943,11 +948,13 @@ function UserManagement() {
         )}
       </Modal>
 
+      {bulkOnboardOpen && <Suspense fallback={<Modal open title="Bulk teacher onboarding" onClose={() => setBulkOnboardOpen(false)}><span className="spin h-6 w-6" /></Modal>}>
       <BulkTeacherOnboardModal
         isOpen={bulkOnboardOpen}
         onClose={() => setBulkOnboardOpen(false)}
         onSuccess={loadUsers}
       />
+      </Suspense>}
     </SuperAdminShell>
   );
 }

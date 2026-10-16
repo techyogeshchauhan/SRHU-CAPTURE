@@ -29,6 +29,8 @@ import useUploadLimits from "../../hooks/useUploadLimits";
 import { checkUploadNames } from "../../services/directory";
 import { DEFAULT_REPORT_PHOTOS, saveReportPhotos } from "../../services/eventManager";
 import Combobox from "../../components/common/Combobox";
+import OrganizerPicker from "../../components/common/OrganizerPicker";
+import { normalizeOrganizers, organizersOf, organizerLabel } from "../../utils/organizers";
 import EventSummary from "../../components/common/EventSummary";
 import EventTypeSelect from "../../components/common/EventTypeSelect";
 import DateInputDMY from "../../components/common/DateInputDMY";
@@ -97,6 +99,7 @@ const EMPTY_FORM = {
   // the department it was saved with.
   department: DEFAULT_HOST_DEPARTMENT,
   organizer: "",
+  organizers: null,
   expectedParticipants: "",
   contactInfo: "",
   description: "",
@@ -254,6 +257,7 @@ function CreateEvent() {
   } = useEventTypes();
 
   const [coordinators, setCoordinators] = useState([]);
+  const [organizerSearch, setOrganizerSearch] = useState("");
   const [coordinatorsLoading, setCoordinatorsLoading] = useState(true);
   const [savingCoordinator, setSavingCoordinator] = useState(false);
 
@@ -420,6 +424,7 @@ function CreateEvent() {
               location: draft.location || "",
               department: draft.department || DEFAULT_HOST_DEPARTMENT,
               organizer: draft.organizer || "",
+              organizers: panel.role === "event_manager" ? organizersOf(draft) : null,
               expectedParticipants: draft.expected_participants || "",
               contactInfo: draft.contact_info || "",
               description: draft.description || "",
@@ -470,6 +475,7 @@ function CreateEvent() {
                 location: event.location || "",
                 department: fields.department,
                 organizer: fields.organizer,
+                organizers: panel.role === "event_manager" ? organizersOf(event, fields.organizer) : null,
                 expectedParticipants: fields.expectedParticipants,
                 contactInfo: fields.contactInfo || "",
                 description: fields.description,
@@ -500,7 +506,7 @@ function CreateEvent() {
     return () => {
       cancelled = true;
     };
-  }, [draftIdParam, editEventIdParam, navigate, panel.api]);
+  }, [draftIdParam, editEventIdParam, navigate, panel.api, panel.role]);
 
   // --------------------------------------------------
   // Form change
@@ -578,7 +584,17 @@ function CreateEvent() {
    * destroy something the teacher typed themselves.
    */
   const selectCoordinator = (option) => {
-    setField("organizer", option.name);
+    const manager = panel.role === "event_manager";
+    const previous = organizersOf(formData);
+    if (manager) {
+      setOrganizers([...previous, option.name]);
+      setOrganizerSearch("");
+    } else {
+      setField("organizer", option.name);
+    }
+
+    // Keep the first automatic contact when additional organizers are chosen.
+    if (manager && previous.length > 0) return;
 
     const current = formData.contactInfo.trim();
     const safeToOverwrite =
@@ -591,9 +607,15 @@ function CreateEvent() {
     }
   };
 
+  const setOrganizers = (names) => {
+    const organizers = normalizeOrganizers(names);
+    setFormData((previous) => ({ ...previous, organizers, organizer: organizerLabel(organizers) }));
+    clearFieldError("organizer");
+  };
+
   // Offered only when the typed name is not already in the directory and there
   // is a number to store with it — a contact card with no number is useless.
-  const typedOrganizer = formData.organizer.trim();
+  const typedOrganizer = (panel.role === "event_manager" ? organizerSearch : formData.organizer).trim();
   const canSaveCoordinator =
     typedOrganizer.length > 1 &&
     /^\d{10}$/.test(formData.contactInfo.trim()) &&
@@ -611,6 +633,7 @@ function CreateEvent() {
       if (created) {
         setCoordinators((current) => [...current, created]);
         autoFilledContactRef.current = created.phone;
+        if (panel.role === "event_manager") selectCoordinator(created);
       }
     } catch (err) {
       setError(err?.message || "Could not save that coordinator.");
@@ -653,6 +676,7 @@ function CreateEvent() {
       start_time: data.startTime || null,
       end_time: data.endTime || null,
       organizer: data.organizer.trim() || null,
+      ...(panel.role === "event_manager" ? { organizers: organizersOf(data) } : {}),
       coordinator_contact: data.contactInfo.trim() || null,
       social_network_url: data.socialNetworkUrl.trim() || null,
       save_as_draft: saveAsDraft,
@@ -1486,6 +1510,7 @@ function CreateEvent() {
 
               <div className="field col-span-2">
                 <EventTypeSelect
+                  canManageTypes={panel.role === "event_manager"}
                   value={formData.eventType}
                   customValue={formData.eventTypeOther}
                   onChange={(value) => setField("eventType", value)}
@@ -1598,7 +1623,12 @@ function CreateEvent() {
               </div>
 
               <div className="col-span-2 md:col-span-1">
-                <Combobox
+                {panel.role === "event_manager" ? <OrganizerPicker
+                  value={organizersOf(formData)} onChange={setOrganizers} onSelect={selectCoordinator}
+                  query={organizerSearch} onQueryChange={setOrganizerSearch}
+                  options={coordinators} loading={coordinatorsLoading} disabled={busy}
+                  error={fieldErrors.organizer}
+                /> : <Combobox
                   id="organizer"
                   label="Organizer / Faculty Coordinator"
                   required
@@ -1617,7 +1647,7 @@ function CreateEvent() {
                       <span className="prose-muted text-xs">{option.phone}</span>
                     </span>
                   )}
-                />
+                />}
                 {canSaveCoordinator && (
                   <button
                     type="button"
@@ -1627,7 +1657,7 @@ function CreateEvent() {
                   >
                     {savingCoordinator
                       ? "Saving…"
-                      : `+ Save "${formData.organizer.trim()}" to the directory`}
+                      : `+ Save "${typedOrganizer}" to the directory`}
                   </button>
                 )}
               </div>

@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import logging
 
+from fastapi import HTTPException
 from pymongo import ASCENDING
-from pymongo.errors import DuplicateKeyError, PyMongoError
+from pymongo.collection import Collection
+from pymongo.errors import ConfigurationError, DuplicateKeyError, OperationFailure, PyMongoError
 
 from app.database import event_types
 from app.models.documents import DEFAULT_EVENT_TYPES, new_event_type_document
@@ -59,11 +61,15 @@ def list_event_type_names() -> list[str]:
     return [str(row["name"]) for row in rows if row.get("name")]
 
 
-def find_event_type(name: str) -> dict | None:
+def find_event_type(name: str, *, session=None) -> dict | None:
     """The stored row for this name, matched case-insensitively."""
     try:
-        return event_types.find_one({"key": name.casefold()})
+        options = {"session": session} if session is not None else {}
+        return (event_types.find_one({"key": name.casefold()}, **options)
+                or event_types.find_one({"aliases": name.casefold()}, **options))
     except PyMongoError as error:
+        if session is not None:
+            raise
         logger.error("event_types_find_failed error=%s", error)
         return None
 
@@ -99,6 +105,40 @@ def resolve_event_type(value: str | None, *, created_by: str | None = None,
         logger.error("event_types_insert_failed name=%s error=%s", name, error)
 
     return name
+
+
+def transactions_unavailable(error: Exception) -> bool:
+    return (isinstance(error, OperationFailure) and error.code == 20) or (
+        isinstance(error, ConfigurationError) and "sessions" in str(error).lower()
+    )
+
+
+def write_event_with_type(collection, value: str, *, created_by: str, operation):
+    """Serialize event saves with catalog migrations on transaction-capable MongoDB.
+
+    The callback only performs database writes and may be retried by MongoDB.
+    Standalone servers keep the original event-save behavior; management itself
+    fails closed on those servers and therefore cannot race with those saves.
+    """
+    value = clean_event_type_name(value)
+    name = resolve_event_type(value, created_by=created_by)
+    if not isinstance(collection, Collection) or not isinstance(event_types, Collection):
+        return operation(name, None)
+
+    def save(session):
+        row = find_event_type(value, session=session)
+        if not row:
+            raise HTTPException(409, "Event types changed. Reload the form and try again.")
+        event_types.update_one({"_id": row["_id"]}, {"$inc": {"usage_revision": 1}}, session=session)
+        return operation(row["name"], session)
+
+    try:
+        with event_types.database.client.start_session() as session:
+            return session.with_transaction(save)
+    except (OperationFailure, ConfigurationError) as error:
+        if not transactions_unavailable(error):
+            raise
+        return operation(resolve_event_type(value, created_by=created_by), None)
 
 
 def seed_default_event_types() -> None:

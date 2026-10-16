@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 
 import Modal from "../teacher/Modal";
+import ManageEventTypesModal from "./ManageEventTypesModal";
 
 /**
  * Event category picker (PRD 4 / 14).
@@ -24,11 +25,13 @@ function EventTypeSelect({
   disabled,
   error,
   customError,
+  canManageTypes = false,
 }) {
   const selectId = useId();
   const customId = useId();
 
   const [addOpen, setAddOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [addError, setAddError] = useState("");
@@ -102,6 +105,16 @@ function EventTypeSelect({
       >
         + Add event type
       </button>
+
+      {canManageTypes && <button type="button" className="btn btn-ghost btn-xs mt-1 self-start"
+        disabled={disabled} onClick={() => setManageOpen(true)}>Manage event types</button>}
+      {manageOpen && <ManageEventTypesModal onClose={() => setManageOpen(false)} onChanged={(result) => {
+        const current = (value === "Other" ? customValue : value) || "";
+        if (result.previous_names.some((name) => name.toLowerCase() === current.toLowerCase())) {
+          onChange(result.event_type);
+          onCustomChange("");
+        }
+      }} />}
 
       {isOther && (
         <div className="mt-2">

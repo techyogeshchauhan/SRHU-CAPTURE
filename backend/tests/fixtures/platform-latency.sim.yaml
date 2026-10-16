@@ -1,0 +1,5 @@
+simulation: srhu-platform-latency
+routing: path
+mocks:
+  - routeKey: latency
+    path: ./platform-latency.js

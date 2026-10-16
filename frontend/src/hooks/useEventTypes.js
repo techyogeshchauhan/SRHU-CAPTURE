@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   FALLBACK_EVENT_TYPES,
+  EVENT_TYPES_CHANGED,
   createEventType,
   listEventTypes,
 } from "../services/directory";
@@ -42,6 +43,9 @@ export default function useEventTypes() {
 
   useEffect(() => {
     load();
+    const changed = (event) => setTypes(event.detail);
+    window.addEventListener(EVENT_TYPES_CHANGED, changed);
+    return () => window.removeEventListener(EVENT_TYPES_CHANGED, changed);
   }, [load]);
 
   /** Add a category and return its canonical spelling, or null on failure. */

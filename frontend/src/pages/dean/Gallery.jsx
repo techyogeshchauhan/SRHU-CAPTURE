@@ -36,7 +36,7 @@ const EMPTY_TOTALS = { events: 0, photos: 0, videos: 0 };
 // paging by event they split a month across pages and spent a row on each
 // heading, while each card already shows its date.
 const ALBUM_GRID =
-  "grid list-none grid-cols-2 gap-3 p-0 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6";
+  "grid list-none grid-cols-2 gap-3 p-0 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4";
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 

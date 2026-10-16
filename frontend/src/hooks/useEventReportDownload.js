@@ -48,6 +48,8 @@ export default function useEventReportDownload() {
   const [downloadProgress, setDownloadProgress] = useState("");
   const [downloadNotice, setDownloadNotice] = useState("");
   const [downloadError, setDownloadError] = useState("");
+  const [customizing, setCustomizing] = useState(null);
+  const [generationError, setGenerationError] = useState("");
 
   const downloadSingle = useCallback(async (event) => {
     if (!event) return;
@@ -57,18 +59,10 @@ export default function useEventReportDownload() {
       return;
     }
 
-    try {
-      setDownloadingRowId(event.id);
-      setDownloadNotice("");
-      setDownloadError("");
-      const outcome = await downloadDeanEventReport(event.id, event.event_name);
-      setDownloadNotice(reportNotice(outcome, `Report for "${event.event_name}"`));
-    } catch (err) {
-      console.error("Download event report error:", err);
-      setDownloadError(err?.message || "Failed to download report.");
-    } finally {
-      setDownloadingRowId(null);
-    }
+    setDownloadNotice("");
+    setDownloadError("");
+    setCustomizing({ events: [event], bulk: false });
+    setGenerationError("");
   }, []);
 
   const downloadBulk = useCallback(async (events) => {
@@ -82,31 +76,37 @@ export default function useEventReportDownload() {
       return;
     }
 
-    const ids = eligibleEvents.map((e) => e.id);
+    setDownloadNotice("");
+    setDownloadError("");
+    setCustomizing({ events: eligibleEvents, bulk: true });
+    setGenerationError("");
+  }, []);
 
+  const generateReport = async (options) => {
+    if (!customizing) return;
+    const { events, bulk } = customizing;
+    const ids = events.map((item) => item.id);
     try {
-      setIsBulkDownloading(true);
-      setDownloadNotice("");
       setDownloadError("");
-
-      if (ids.length === 1) {
-        setDownloadProgress("Preparing 1 report...");
-        const item = eligibleEvents[0];
-        const outcome = await downloadDeanEventReport(item.id, item.event_name);
-        setDownloadNotice(reportNotice(outcome, `Report for "${item.event_name}"`));
-      } else {
-        setDownloadProgress(`Preparing ${ids.length} reports...`);
-        const outcome = await downloadDeanEventsReport(ids);
-        setDownloadNotice(reportNotice(outcome, `Consolidated report (${ids.length} events)`));
-      }
+      setGenerationError("");
+      setIsBulkDownloading(bulk);
+      setDownloadingRowId(bulk ? null : ids[0]);
+      setDownloadProgress(`Preparing ${ids.length} report${ids.length === 1 ? "" : "s"}...`);
+      const outcome = ids.length === 1
+        ? await downloadDeanEventReport(ids[0], events[0].event_name, options)
+        : await downloadDeanEventsReport(ids, options);
+      setDownloadNotice(reportNotice(outcome, ids.length === 1 ? `Report for "${events[0].event_name}"` : `Consolidated report (${ids.length} events)`));
+      setCustomizing(null);
     } catch (err) {
       console.error("Bulk download reports error:", err);
       setDownloadError(err?.message || "Failed to generate report.");
+      setGenerationError(err?.message || "Failed to generate report.");
     } finally {
       setIsBulkDownloading(false);
+      setDownloadingRowId(null);
       setDownloadProgress("");
     }
-  }, []);
+  };
 
   return {
     downloadingRowId,
@@ -119,5 +119,17 @@ export default function useEventReportDownload() {
     downloadSingle,
     downloadBulk,
     canDownload: canDownloadEventReport,
+    reportModalProps: {
+      open: Boolean(customizing),
+      onClose: () => { if (!downloadingRowId && !isBulkDownloading) setCustomizing(null); },
+      onGenerate: generateReport,
+      generating: Boolean(downloadingRowId || isBulkDownloading),
+      eventIds: customizing?.events.map((item) => item.id) || [],
+      eventName: customizing?.events.length === 1 ? customizing.events[0].event_name : "",
+      isConsolidated: Boolean(customizing?.bulk),
+      eventCount: customizing?.events.length || 1,
+      apiBase: "/dean",
+      error: generationError,
+    },
   };
 }

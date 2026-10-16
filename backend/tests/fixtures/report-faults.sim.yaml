@@ -1,0 +1,5 @@
+simulation: srhu-report-faults
+routing: path
+mocks:
+  - routeKey: storage
+    path: ./report-faults.js

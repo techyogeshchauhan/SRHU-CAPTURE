@@ -1,4 +1,5 @@
 import DocumentLimitsTab from "./DocumentLimitsTab";
+import ResearchLimitsTab from "./ResearchLimitsTab";
 import UploadLimitsTab from "./UploadLimitsTab";
 
 /**
@@ -29,6 +30,12 @@ export const SETTINGS_TABS = [
     label: "Documents",
     Component: DocumentLimitsTab,
     fields: ["max_documents_per_event", "max_documents_total_mb", "documents_required"],
+  },
+  {
+    key: "research",
+    label: "Research evidence",
+    Component: ResearchLimitsTab,
+    fields: ["max_research_evidence_files", "max_research_evidence_total_mb", "research_evidence_required"],
   },
 ];
 

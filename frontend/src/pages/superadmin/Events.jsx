@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { submitterOf } from "../../components/common/submitter";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { apiFetch, apiJson } from "../../services/api";
+import { apiFetch, apiJson, isAbortError } from "../../services/api";
+import useLatestRead from "../../hooks/useLatestRead";
 import { useAuth } from "../../context/AuthContext";
 import SuperAdminShell from "../../components/superadmin/SuperAdminShell";
 import PageHero from "../../components/teacher/PageHero";
@@ -40,6 +41,7 @@ const formatDay = (value) => {
  * see its photos, videos and documents. Decisions stay with the Deans.
  */
 export default function SuperAdminEvents() {
+  const beginRead = useLatestRead();
   const navigate = useNavigate();
   const { profile, signOut } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -110,6 +112,7 @@ export default function SuperAdminEvents() {
   };
 
   const loadEvents = useCallback(async () => {
+    const controller = beginRead();
     try {
       setLoading(true);
       setError("");
@@ -127,7 +130,8 @@ export default function SuperAdminEvents() {
 
       // Each event carries its teacher's name; the page used to download every
       // account to look them up -- and storing that list re-ran this load.
-      const eventData = await apiJson(`/dean/events?${params}`);
+      const eventData = await apiJson(`/dean/events?${params}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
 
       setEvents(eventData?.events || []);
       setTotal(eventData?.total || 0);
@@ -135,6 +139,7 @@ export default function SuperAdminEvents() {
         setCounts(eventData.counts);
       }
     } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) return;
       if (err?.status === 401) {
         navigate("/login", { replace: true });
         return;
@@ -142,9 +147,9 @@ export default function SuperAdminEvents() {
       console.error("Load events error:", err);
       setError(err.message || "Failed to load events");
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  }, [skip, per, statusFilter, urlQ, navigate]);
+  }, [skip, per, statusFilter, urlQ, navigate, beginRead]);
 
   useEffect(() => {
     loadEvents();

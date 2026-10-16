@@ -1,12 +1,42 @@
 """Request bodies for the Event Manager role (routers/event_manager.py).
 
-Event fields use the teacher schemas (EventCreateRequest / EventUpdateRequest):
-the Event Manager fills in the Teacher form.
+Event fields extend the shared teacher schema with multiple organizers.
 """
 
-from pydantic import BaseModel, Field
+from typing import Annotated
 
+from pydantic import BaseModel, Field, StringConstraints, model_validator
+
+from app.schemas.events import EventCreateRequest
 from app.schemas.reports import ReportCustomizationOptions
+
+
+OrganizerName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120, strict=True)]
+
+
+class ManagedEventRequest(EventCreateRequest):
+    """Create/edit fields, with legacy single-organizer request compatibility."""
+
+    organizer: str | None = Field(default=None, max_length=2500)
+    organizers: list[OrganizerName] | None = Field(default=None, min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def normalize_organizers(self):
+        names = self.organizers
+        if names is None:
+            if not self.organizer:
+                raise ValueError("Select at least one organizer or faculty coordinator.")
+            if len(self.organizer) > 120:
+                raise ValueError("Each organizer name must be 120 characters or fewer.")
+            names = [self.organizer]
+        unique = {}
+        for name in names:
+            unique.setdefault(name.casefold(), name)
+        self.organizers = list(unique.values())
+        # All existing role/detail/report readers retain their string contract.
+        # The array is authoritative when both representations are submitted.
+        self.organizer = "; ".join(self.organizers)
+        return self
 
 # Photos in an event's report. The teacher or Event Manager ticks as many as
 # they like while uploading; until they choose, the report shows the first

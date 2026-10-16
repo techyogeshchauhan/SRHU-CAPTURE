@@ -394,7 +394,8 @@ export default function DeanDashboard() {
       key: "total",
       label: "Total Events",
       value: stats.total_events,
-      hint: "Everything submitted across campus",
+      hint: "View all",
+      to: "/dean/events",
       track: TOTAL_TRACK,
       Icon: IconLayers,
     },
@@ -402,7 +403,8 @@ export default function DeanDashboard() {
       key: "pending",
       label: "Pending",
       value: stats.pending_events,
-      hint: "Awaiting your decision",
+      hint: "View pending",
+      to: "/dean/events?status=pending",
       track: trackOf("pending"),
       Icon: IconClock,
     },
@@ -410,7 +412,8 @@ export default function DeanDashboard() {
       key: "approved",
       label: "Approved",
       value: stats.approved_events,
-      hint: "Cleared to go ahead",
+      hint: "View approved",
+      to: "/dean/events?status=approved",
       track: trackOf("approved"),
       Icon: IconCheckCircle,
     },
@@ -418,7 +421,8 @@ export default function DeanDashboard() {
       key: "rejected",
       label: "Rejected",
       value: stats.rejected_events,
-      hint: "Sent back to the teacher",
+      hint: "View rejected",
+      to: "/dean/events?status=rejected",
       track: trackOf("rejected"),
       Icon: IconXCircle,
     },
@@ -560,6 +564,8 @@ export default function DeanDashboard() {
                 <StatCard
                   key={card.key}
                   index={i}
+                  compact
+                  to={card.to}
                   label={card.label}
                   value={loadingStats ? "—" : card.value}
                   Icon={card.Icon}

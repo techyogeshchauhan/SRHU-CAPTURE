@@ -35,6 +35,9 @@ LIMIT_BOUNDS: dict[str, dict[str, object]] = {
     "max_video_total_mb": {"min": 1, "max": 2000, "unit": "mb"},
     "max_documents_per_event": {"min": 1, "max": 200, "unit": "count"},
     "max_documents_total_mb": {"min": 1, "max": 500, "unit": "mb"},
+    # Evidence behind one research record (routers/research.py).
+    "max_research_evidence_files": {"min": 1, "max": 20, "unit": "count"},
+    "max_research_evidence_total_mb": {"min": 1, "max": 100, "unit": "mb"},
 }
 
 # Per-file ceilings the deployment must be able to physically accept. Documents
@@ -44,6 +47,8 @@ PER_FILE_LIMIT_FIELDS = (
     "max_photo_size_mb",
     "max_video_size_mb",
     "max_documents_total_mb",
+    # Budgeted by combined size like documents, so also the largest one file.
+    "max_research_evidence_total_mb",
 )
 
 
@@ -98,6 +103,25 @@ class UploadLimitsUpdateRequest(BaseModel):
     )
     documents_required: bool = Field(
         default=True, description="At least one document is needed to submit an event"
+    )
+    # Defaulted, so a client that predates them still validates -- and saves
+    # the defaults rather than nothing, which update_upload_limits would
+    # otherwise store as null.
+    max_research_evidence_files: int = Field(
+        default=settings.max_research_evidence_files,
+        ge=LIMIT_BOUNDS["max_research_evidence_files"]["min"],
+        le=LIMIT_BOUNDS["max_research_evidence_files"]["max"],
+        description="Max evidence files per research record",
+    )
+    max_research_evidence_total_mb: int = Field(
+        default=settings.max_research_evidence_total_mb,
+        ge=LIMIT_BOUNDS["max_research_evidence_total_mb"]["min"],
+        le=LIMIT_BOUNDS["max_research_evidence_total_mb"]["max"],
+        description="Max combined size of one research record's evidence in MB",
+    )
+    research_evidence_required: bool = Field(
+        default=False,
+        description="At least one evidence file is needed to submit a research record",
     )
 
     @model_validator(mode="after")

@@ -118,6 +118,10 @@ class FakeCursor(list):
 
 
 class FakeCollection:
+    def aggregate(self, pipeline):
+        from tests.fake_aggregation import aggregate_rows
+        return iter(aggregate_rows(self.docs.values(), pipeline, _matches))
+
     def __init__(self):
         self.docs: dict[ObjectId, dict] = {}
 
@@ -499,12 +503,18 @@ def pdf_links(data: bytes) -> list[str]:
 
 
 class ReportTests(EventManagerTestCase):
+    def approve_for_report(self, event_id):
+        # Report tests start after the Dean's decision. Submission itself stays
+        # pending and is tested separately by the approval workflow tests.
+        self.events.update_one({"_id": ObjectId(event_id)}, {"$set": {"status": "approved"}})
+
     def seeded(self, **overrides):
         event = self.draft(**overrides)
         self.photo(event["id"], name="portrait.png", data=image_bytes(300, 600))
         self.photo(event["id"], name="landscape.jpg", data=image_bytes(800, 450, "JPEG"), mime="image/jpeg")
         self.document(event["id"])
         self.assertEqual(self.save(event["id"], **overrides).status_code, 200)
+        self.approve_for_report(event["id"])
         return event
 
     def test_single_report_has_details_photos_and_links_but_no_approval(self) -> None:
@@ -617,6 +627,7 @@ class ReportTests(EventManagerTestCase):
         )
         self.photo(event["id"])
         self.save(event["id"])
+        self.approve_for_report(event["id"])
 
         # Include notices only:
         resp = self.call("POST", f"/event-manager/events/{event['id']}/report", json={
@@ -649,6 +660,7 @@ class ReportTests(EventManagerTestCase):
         photo_id = photo_resp.json()["media"]["id"]
         self.document(event["id"])
         self.save(event["id"])
+        self.approve_for_report(event["id"])
 
         payload = {
             "include_photos": True,

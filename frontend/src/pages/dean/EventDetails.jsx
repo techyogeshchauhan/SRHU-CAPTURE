@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { fetchCurrentUser, signOut } from "../../services/auth";
-import { apiFetch, apiJson, errorFromResponse } from "../../services/api";
-import { fileNameFromResponse, reportFileName } from "../../utils/fileNames";
+import { apiJson } from "../../services/api";
+import { downloadDeanEventReport, reportNotice } from "../../services/eventManager";
+import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
 import useMediaRefresh from "../../components/common/useMediaRefresh";
 import { submitterOf } from "../../components/common/submitter";
 import DeanShell from "../../components/dean/DeanShell";
@@ -68,6 +69,7 @@ function EventDetails() {
   const [processing, setProcessing] = useState(false);
 
   const [reportLoading, setReportLoading] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [reportGenerated, setReportGenerated] = useState(false);
   const [generatedAt, setGeneratedAt] = useState(null);
 
@@ -470,31 +472,8 @@ function EventDetails() {
   // GENERATE REPORT
   // ============================================================
 
-  // The server builds the PDF from the latest event, media and document data.
-  const savePdf = async () => {
-    const response = await apiFetch(`/dean/events/${event.id}/report/download`, {
-      method: "GET",
-    });
-
-    if (!response.ok) {
-      throw await errorFromResponse(response, "Failed to download report");
-    }
-
-    const blob = await response.blob();
-    const downloadUrl = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    // Named after the event ("IEEE Conference.pdf"): the server's name,
-    // or the same rule applied here if the header cannot be read.
-    link.download = fileNameFromResponse(response) || reportFileName(event.event_name);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(downloadUrl);
-  };
-
-  // Generate and download the current report in one action.
-  const handleDownloadReport = async () => {
+  // The same choices are saved and used to build the downloaded PDF.
+  const handleExecuteReport = async (customization) => {
     if (!event) return;
     try {
       setReportLoading(true);
@@ -503,12 +482,14 @@ function EventDetails() {
 
       const generated = await apiJson(`/dean/events/${event.id}/generate-report`, {
         method: "POST",
+        body: customization,
       });
 
       setReportGenerated(true);
       setGeneratedAt(generated?.generated_at || null);
-      await savePdf();
-      setSuccess("Report generated and downloaded successfully.");
+      const outcome = await downloadDeanEventReport(event.id, event.event_name, customization);
+      setSuccess(reportNotice(outcome));
+      setShowReportModal(false);
     } catch (err) {
       handleApiError(err, "Failed to generate and download report", "Generate and download report error");
     } finally {
@@ -948,7 +929,7 @@ function EventDetails() {
                     <div className="flex flex-wrap gap-2.5 border-t hairline pt-5">
                       <button
                         type="button"
-                        onClick={handleDownloadReport}
+                        onClick={() => { setError(""); setShowReportModal(true); }}
                         disabled={reportLoading || !canReport}
                         className="btn btn-brand btn-sm flex-1"
                       >
@@ -1480,6 +1461,16 @@ function EventDetails() {
         </div>
       </Modal>
 
+      <ReportCustomizationModal
+        open={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        onGenerate={handleExecuteReport}
+        generating={reportLoading}
+        eventIds={event ? [event.id] : []}
+        eventName={event?.event_name}
+        apiBase="/dean"
+        error={error}
+      />
     </DeanShell>
   );
 }

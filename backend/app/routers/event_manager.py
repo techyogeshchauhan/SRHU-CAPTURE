@@ -8,6 +8,7 @@ Existing recorded events remain readable without a data migration.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -36,6 +37,7 @@ from app.database import (
     managed_events,
 )
 from app.models.documents import (
+    APPROVED_STAGES,
     new_document_document,
     new_history_entry,
     new_media_document,
@@ -56,15 +58,17 @@ from app.routers.events import (
 )
 from app.schemas.event_manager import (
     ManagedBulkDeleteRequest,
+    ManagedEventRequest,
     ManagedReportRequest,
     ReportPhotosRequest,
 )
-from app.schemas.events import BulkEventIdsRequest, EventCreateRequest, EventUpdateRequest, draft_details_error
+from app.schemas.events import BulkEventIdsRequest, draft_details_error
 from app.schemas.reports import ReportCustomizationOptions
 from app.schemas.uploads import DirectUploadSignRequest, DirectUploadStartRequest
 from app.services import direct_upload, report_files
+from app.services.event_dashboard import dashboard_events
 from app.services.event_fields import many_with_legacy_metadata, with_legacy_metadata
-from app.services.event_types import resolve_event_type
+from app.services.event_types import resolve_event_type, write_event_with_type
 from app.services.managed_report_pdf import (
     ReportEntry,
     attachment_for,
@@ -152,7 +156,7 @@ def _ensure_recordable(event: dict) -> None:
             )
 
 
-def _event_values(payload: EventCreateRequest, user: dict) -> dict:
+def _event_values(payload: ManagedEventRequest, user: dict) -> dict:
     return {
         "event_name": payload.event_name,
         "event_date": payload.event_date,
@@ -164,6 +168,7 @@ def _event_values(payload: EventCreateRequest, user: dict) -> dict:
         "start_time": payload.start_time,
         "end_time": payload.end_time,
         "organizer": payload.organizer,
+        "organizers": payload.organizers,
         "coordinator_contact": payload.coordinator_contact,
     }
 
@@ -182,8 +187,11 @@ def _public_event(event: dict) -> dict:
 def list_events(
     skip: int | None = Query(default=None, ge=0),
     limit: int | None = Query(default=None, ge=1, le=1000),
+    dashboard: bool = Query(default=False),
     user: dict = Depends(manager_dep),
 ):
+    if dashboard:
+        return dashboard_events(managed_events, {"owner_id": user["id"]})
     event_list, total = paginate(
         managed_events, {"owner_id": user["id"]}, "created_at", DESCENDING, skip, limit
     )
@@ -200,7 +208,7 @@ def list_events(
 
 
 @router.post("/events", status_code=status.HTTP_201_CREATED)
-def create_event(payload: EventCreateRequest, user: dict = Depends(manager_dep)):
+def create_event(payload: ManagedEventRequest, user: dict = Depends(manager_dep)):
     # As for teachers: save a draft, attach the files, then save it for real.
     if not payload.save_as_draft:
         raise HTTPException(
@@ -214,12 +222,20 @@ def create_event(payload: EventCreateRequest, user: dict = Depends(manager_dep))
         "owner_name": user.get("name"),
         "owner_email": user.get("email"),
         "status": "draft",
+        # Server-owned policy: legacy recorded events retain their report access.
+        "report_approval_required": True,
         "report_photo_ids": None,
         "history": [new_history_entry(action="created", status="draft", actor=user)],
         "created_at": now,
         "updated_at": now,
     }
-    document["_id"] = managed_events.insert_one(document).inserted_id
+    def insert(name, session):
+        document["event_type"] = name
+        return managed_events.insert_one(document, **({"session": session} if session else {})).inserted_id
+
+    document["_id"] = write_event_with_type(
+        managed_events, payload.event_type, created_by=user["id"], operation=insert,
+    )
     return {"success": True, "message": "Draft saved", "event": serialize(document)}
 
 
@@ -251,7 +267,7 @@ def bulk_record_events(payload: BulkEventIdsRequest, user: dict = Depends(manage
         except HTTPException as error:
             results.append({**row, "status": "skipped", "reason": error.detail})
             continue
-        problem = draft_details_error(event)
+        problem = draft_details_error(event, ManagedEventRequest)
         if problem:
             results.append({**row, "status": "skipped", "reason": f"Complete the event details first. {problem}"})
             continue
@@ -350,7 +366,7 @@ def get_event(event_id: str, request: Request, user: dict = Depends(manager_dep)
 
 
 @router.patch("/events/{event_id}")
-def update_event(event_id: str, payload: EventUpdateRequest, user: dict = Depends(manager_dep)):
+def update_event(event_id: str, payload: ManagedEventRequest, user: dict = Depends(manager_dep)):
     """Save a draft, or submit corrected details for Dean review.
 
     Submission sets pending and clears the current refusal. The rejection
@@ -394,8 +410,15 @@ def update_event(event_id: str, payload: EventUpdateRequest, user: dict = Depend
             )
         }
 
-    updated = managed_events.find_one_and_update(
-        {"_id": event["_id"], "owner_id": user["id"], "status": previous}, update, return_document=True
+    def save(name, session):
+        changes["event_type"] = name
+        return managed_events.find_one_and_update(
+            {"_id": event["_id"], "owner_id": user["id"], "status": previous}, update,
+            return_document=True, **({"session": session} if session else {}),
+        )
+
+    updated = write_event_with_type(
+        managed_events, payload.event_type, created_by=user["id"], operation=save,
     )
     if not updated:
         _own_event_or_404(event_id, user)
@@ -777,18 +800,7 @@ def _report_entry(request: Request, event: dict, exp: int, customization: dict |
             ]
         else:
             pids = _report_photo_ids(event)
-        for pid in pids:
-            row = by_id.get(pid)
-            if not row:
-                failures += 1
-                continue
-            data = report_files.read_file_bytes(row, fs)
-            prepared = prepare_photo(data) if data else None
-            del data
-            if prepared:
-                photos.append(prepared)
-            else:
-                failures += 1
+        photos, failures = report_files.prepare_report_photos([by_id.get(pid) for pid in pids], fs, prepare_photo)
 
     attachments = [
         attachment_for(
@@ -814,6 +826,7 @@ def _report_entry(request: Request, event: dict, exp: int, customization: dict |
         attachments=attachments,
         recorded_by={"name": event.get("owner_name"), "email": event.get("owner_email")},
         customization=opts,
+        omit_empty_fields=customization is not None,
     )
 
 
@@ -833,11 +846,22 @@ def _report_file_name(name: str | None) -> str:
     return report_file_name(name)
 
 
-def _reject_draft_report_events(events: list[dict]) -> None:
-    if any(event.get("status") == "draft" for event in events):
+def _ensure_report_events_approved(events: list[dict]) -> None:
+    """Keep legacy recorded access; new events need a current approved stage."""
+    states = [str(event.get("status") or "").strip().lower() for event in events]
+    if "draft" in states:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Draft events cannot be included in the report. Please select only non-draft events to generate the report.",
+        )
+    if any(
+        state not in APPROVED_STAGES
+        and not (state == RECORDED and event.get("report_approval_required") is not True)
+        for event, state in zip(events, states)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Report unavailable.",
         )
 
 
@@ -883,7 +907,7 @@ def event_report(
 ):
     """The report for one event -- generated directly, with optional customization."""
     event = _own_event_or_404(event_id, user)
-    _reject_draft_report_events([event])
+    _ensure_report_events_approved([event])
 
     customization = report_files.resolve_customization(
         payload,
@@ -900,13 +924,16 @@ def event_report(
     )
 
     exp = report_files.links_expiry()
+    started = time.monotonic()
+    logger.info("managed_report_started events=1 photos=%s", customization is None or customization.get("include_photos", True))
     entry = _report_entry(request, event, exp, customization=customization)
+    logger.info("managed_report_prepared photos=%d elapsed_ms=%d", len(entry.photos), (time.monotonic() - started) * 1000)
     pdf = build_managed_report_pdf(
         [entry],
         links_valid_until=datetime.fromtimestamp(exp, tz=timezone.utc),
         customization=customization,
     )
-    logger.info("managed_report_generated events=1 owner=%s", user["id"])
+    logger.info("managed_report_generated events=1 bytes=%d elapsed_ms=%d owner=%s", len(pdf.getvalue()), (time.monotonic() - started) * 1000, user["id"])
     _record_reports([event], customization, user)
     return _pdf_response(pdf, _report_file_name(event.get("event_name")))
 
@@ -928,7 +955,7 @@ def multi_event_report(payload: ManagedReportRequest, request: Request, user: di
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"{missing} of the selected events could not be found.",
         )
-    _reject_draft_report_events(list(found.values()))
+    _ensure_report_events_approved(list(found.values()))
 
     customization = report_files.resolve_customization(payload.customization)
 

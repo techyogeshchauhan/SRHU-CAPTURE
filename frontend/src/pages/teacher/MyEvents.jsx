@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { apiJson } from "../../services/api";
 import { useOriginState } from "../../hooks/useOriginState";
@@ -23,7 +23,10 @@ import {
 } from "../../services/eventManager";
 import Modal from "../../components/teacher/Modal";
 import DateRangeModal from "../../components/common/DateRangeModal";
+import Pagination from "../../components/common/Pagination";
 import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
+import EventReportButton from "../../components/common/EventReportButton";
+import { eventReportRestriction, selectedReportsRestriction } from "../../utils/eventReportEligibility";
 import StatusChip from "../../components/teacher/StatusChip";
 import {
   isApprovedStatus,
@@ -147,17 +150,13 @@ function EventActions({ item, canDelete, onDuplicate, onDelete, originState, onR
         </Link>
       )}
 
-      {panel.reports && !item.isDraft && isApprovedStatus(item.status) && (
-        <button
-          type="button"
+      {panel.reports && (
+        <EventReportButton
+          event={item}
           onClick={() => onReport(item)}
-          disabled={reporting}
-          title="Download report"
+          generating={reporting}
           className="btn btn-ghost btn-xs"
-        >
-          {reporting ? <span className="spin h-3 w-3" /> : <IconDownload />}
-          Report
-        </button>
+        />
       )}
 
       <button
@@ -350,7 +349,8 @@ function MyEvents() {
   };
 
   // Combined events and drafts
-  const allCombinedItems = [
+  const allCombinedItems = useMemo(() => {
+    const items = [
     ...drafts.map((d) => ({ ...d, isDraft: true, status: "draft" })),
     ...events.map((e) => ({ ...e, isDraft: false })),
   ];
@@ -359,8 +359,10 @@ function MyEvents() {
   // event just created is at the top. The teacher list keeps its own order.
   if (!panel.approval) {
     const createdAt = (item) => new Date(item.created_at || item.updated_at || 0).getTime() || 0;
-    allCombinedItems.sort((a, b) => createdAt(b) - createdAt(a));
+    items.sort((a, b) => createdAt(b) - createdAt(a));
   }
+    return items;
+  }, [drafts, events, panel.approval]);
 
   // Calculate tab counts. Drafts are counted from the combined list, not from
   // `drafts` alone: once a draft has a file attached it lives on the server and
@@ -381,64 +383,74 @@ function MyEvents() {
   };
 
   // --- Filtering Conditions ---
-  const matchesSearch = (item) => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase().trim();
-    const name = (item.event_name || item.eventName || "").toLowerCase();
-    const venue = (item.location || "").toLowerCase();
-    const { meta } = decodeEventMetadata(item.description || "");
-    const dept = (item.department || meta.department || "").toLowerCase();
-    return name.includes(q) || venue.includes(q) || dept.includes(q);
-  };
+  const filteredItems = useMemo(() => {
+    const matchesSearch = (item) => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase().trim();
+      const name = (item.event_name || item.eventName || "").toLowerCase();
+      const venue = (item.location || "").toLowerCase();
+      const { meta } = decodeEventMetadata(item.description || "");
+      const dept = (item.department || meta.department || "").toLowerCase();
+      return name.includes(q) || venue.includes(q) || dept.includes(q);
+    };
 
-  const matchesStatus = (item) => {
-    if (activeFilter === "all") return true;
-    if (activeFilter === "draft") return item.status === "draft";
-    if (activeFilter === "pending" || activeFilter === "submitted") {
-      return isPendingStatus(item.status);
-    }
-    if (activeFilter === "approved") return isApprovedStatus(item.status);
-    if (activeFilter === "rejected") return isRefusedStatus(item.status);
-    if (activeFilter === "recorded") return item.status === "recorded";
-    return true;
-  };
-
-  const matchesDate = (item) => {
-    if (dateFilter === "all_time") return true;
-    const eventDateStr = item.event_date || item.eventDate;
-    if (!eventDateStr) return false;
-
-    if (dateFilter === "today") {
-      return eventDateStr === localDateKey();
-    }
-
-    if (dateFilter === "this_week") {
-      // Compare local calendar keys: new Date("YYYY-MM-DD") is UTC midnight.
-      const day = new Date().getDay();
-      const sinceMonday = day === 0 ? 6 : day - 1;
-      const mondayKey = localDateKeyOffset(-sinceMonday);
-      const sundayKey = localDateKeyOffset(6 - sinceMonday);
-      const key = String(eventDateStr).slice(0, 10);
-      return key >= mondayKey && key <= sundayKey;
-    }
-
-    if (dateFilter === "this_month") {
-      return String(eventDateStr).slice(0, 7) === localDateKey().slice(0, 7);
-    }
-
-    if (dateFilter === "custom") {
-      if (customFromDate && eventDateStr < customFromDate) return false;
-      if (customToDate && eventDateStr > customToDate) return false;
+    const matchesStatus = (item) => {
+      if (activeFilter === "all") return true;
+      if (activeFilter === "draft") return item.status === "draft";
+      if (activeFilter === "pending" || activeFilter === "submitted") {
+        return isPendingStatus(item.status);
+      }
+      if (activeFilter === "approved") return isApprovedStatus(item.status);
+      if (activeFilter === "rejected") return isRefusedStatus(item.status);
+      if (activeFilter === "recorded") return item.status === "recorded";
       return true;
-    }
+    };
 
-    return true;
-  };
+    const matchesDate = (item) => {
+      if (dateFilter === "all_time") return true;
+      const eventDateStr = item.event_date || item.eventDate;
+      if (!eventDateStr) return false;
 
-  // Evaluates combination of Search + Status + Date Filter (AND logic)
-  const filteredItems = allCombinedItems.filter(
-    (item) => matchesSearch(item) && matchesStatus(item) && matchesDate(item)
-  );
+      if (dateFilter === "today") {
+        return eventDateStr === localDateKey();
+      }
+
+      if (dateFilter === "this_week") {
+        // Compare local calendar keys: new Date("YYYY-MM-DD") is UTC midnight.
+        const day = new Date().getDay();
+        const sinceMonday = day === 0 ? 6 : day - 1;
+        const mondayKey = localDateKeyOffset(-sinceMonday);
+        const sundayKey = localDateKeyOffset(6 - sinceMonday);
+        const key = String(eventDateStr).slice(0, 10);
+        return key >= mondayKey && key <= sundayKey;
+      }
+
+      if (dateFilter === "this_month") {
+        return String(eventDateStr).slice(0, 7) === localDateKey().slice(0, 7);
+      }
+
+      if (dateFilter === "custom") {
+        if (customFromDate && eventDateStr < customFromDate) return false;
+        if (customToDate && eventDateStr > customToDate) return false;
+        return true;
+      }
+
+      return true;
+    };
+
+    // Evaluates combination of Search + Status + Date Filter (AND logic)
+    return allCombinedItems.filter(
+      (item) => matchesSearch(item) && matchesStatus(item) && matchesDate(item)
+    );
+  }, [allCombinedItems, searchQuery, activeFilter, dateFilter, customFromDate, customToDate]);
+
+  // Browser-only drafts must participate in exactly the same filters and bulk
+  // selections as server events. Page the merged view without losing selection.
+  const filterKey = JSON.stringify([searchQuery, activeFilter, dateFilter, customFromDate, customToDate]);
+  const [paging, setPaging] = useState({ key: filterKey, page: 1, per: 25 });
+  if (paging.key !== filterKey) setPaging({ ...paging, key: filterKey, page: 1 });
+  const currentPage = paging.key === filterKey ? Math.min(paging.page, Math.max(1, Math.ceil(filteredItems.length / paging.per))) : 1;
+  const pageItems = filteredItems.slice((currentPage - 1) * paging.per, currentPage * paging.per);
 
   const canDeleteItem = (item) => item.isDraft || canTeacherEditEvent(item);
 
@@ -449,7 +461,7 @@ function MyEvents() {
   // Event Manager; drafts and not-yet-approved events for a teacher); a report
   // covers the Event Manager's recorded events.
   const selectable = () => true;
-  const reportable = (item) => panel.reports && !item.isDraft && isApprovedStatus(item.status);
+  const reportable = (item) => panel.reports && !eventReportRestriction(item);
   const visibleSelectable = filteredItems.map((item) => item.id);
   const allVisibleSelected =
     visibleSelectable.length > 0 && visibleSelectable.every((id) => selected.has(id));
@@ -458,6 +470,7 @@ function MyEvents() {
     (item) => item.isDraft || String(item.status || "").toLowerCase() === "draft",
   );
   const hasDraftSelected = draftSelectedItems.length > 0;
+  const reportSelectionReason = selectedReportsRestriction(selectedItems);
   const selectedIds = selectedItems.filter(reportable).map((item) => item.id);
   const deletableSelected = panel.approval ? selectedItems.filter(canDeleteItem) : selectedItems;
   const submittableSelected = selectedItems.filter((item) => item.status === "draft" && !item.isDraft);
@@ -480,6 +493,9 @@ function MyEvents() {
     });
 
   const handleReportOne = (item) => {
+    const reason = eventReportRestriction(item);
+    if (reason) { setError(reason); return; }
+    setError("");
     setCustomizingReport({ type: "single", item });
   };
 
@@ -488,6 +504,7 @@ function MyEvents() {
       setDraftReportAlertOpen(true);
       return;
     }
+    if (reportSelectionReason) { setError(reportSelectionReason); return; }
     if (selectedIds.length > MAX_EVENTS_PER_REPORT) {
       setError(`A report can cover at most ${MAX_EVENTS_PER_REPORT} events; ${selectedIds.length} are selected.`);
       return;
@@ -495,6 +512,7 @@ function MyEvents() {
     // Keep the order the list shows them in.
     const ordered = filteredItems.map((item) => item.id).filter((id) => selectedIds.includes(id));
     const rest = selectedIds.filter((id) => !ordered.includes(id));
+    setError("");
     setCustomizingReport({
       type: "selected",
       eventIds: [...ordered, ...rest],
@@ -812,10 +830,10 @@ function MyEvents() {
                       type="checkbox"
                       checked={allVisibleSelected}
                       onChange={toggleAllVisible}
-                      aria-label="Select all shown events"
+                      aria-label="Select all matching events"
                       className="h-4 w-4 cursor-pointer rounded border-line text-accent focus:ring-accent"
                     />
-                    Select all
+                    Select all matching
                   </label>
                   <button
                     type="button"
@@ -837,15 +855,11 @@ function MyEvents() {
                     <button
                       type="button"
                       onClick={handleReportSelected}
-                      disabled={(selectedIds.length === 0 && !hasDraftSelected) || Boolean(reportingId)}
+                      disabled={selectedItems.length === 0 || Boolean(reportSelectionReason) || Boolean(reportingId)}
                       className="btn btn-brand btn-xs"
                     >
                       {reportingId === "selected" ? <span className="spin h-3 w-3" /> : <IconDownload />}
-                      {selectedIds.length > 1
-                        ? `Report for ${selectedIds.length} events`
-                        : selectedIds.length === 1
-                          ? "Report for 1 event"
-                          : "Report for selected"}
+                      Download Report
                     </button>
                   )}
                   <button
@@ -860,7 +874,7 @@ function MyEvents() {
                 </>
               )}
               <p className="num text-xs font-medium text-muted">
-                Showing {filteredItems.length} of {allCombinedItems.length}
+                {filteredItems.length} matching of {allCombinedItems.length} events
               </p>
 
               {isFiltered && (
@@ -927,7 +941,7 @@ function MyEvents() {
                   390px, so each event becomes a card instead.
               ------------------------------------------------ */}
               <ul className="divide-y divide-line/8 md:hidden">
-                {filteredItems.map((item) => {
+                {pageItems.map((item) => {
                   const { meta } = decodeEventMetadata(item.description);
                   const department = item.department || meta.department;
                   const isRejected = isRefusedStatus(item.status);
@@ -1006,7 +1020,7 @@ function MyEvents() {
                 </thead>
 
                 <tbody className="divide-y divide-line/8">
-                  {filteredItems.map((item) => {
+                  {pageItems.map((item) => {
                     const { description: cleanDesc, meta } = decodeEventMetadata(item.description);
                     const department = item.department || meta.department;
                     const isRejected = isRefusedStatus(item.status);
@@ -1093,6 +1107,11 @@ function MyEvents() {
               </table>
             </div>
           )}
+          {filteredItems.length > 0 && <Pagination
+            page={currentPage} perPage={paging.per} total={filteredItems.length} disabled={loading}
+            onPageChange={(page) => setPaging({ ...paging, page })}
+            onPerPageChange={(per) => setPaging({ ...paging, per, page: 1 })}
+          />}
         </div>
       </div>
 
@@ -1318,6 +1337,9 @@ function MyEvents() {
         }
         isConsolidated={customizingReport?.type === "selected"}
         eventCount={customizingReport?.count || 1}
+        eventIds={customizingReport?.type === "single" ? [customizingReport.item.id] : customizingReport?.eventIds || []}
+        apiBase={panel.api}
+        error={error}
       />
 
       <DateRangeModal

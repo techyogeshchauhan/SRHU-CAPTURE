@@ -15,6 +15,7 @@
  */
 
 import { decodeEventMetadata } from "./draftStorage";
+import { organizerLabel } from "./organizers";
 
 /**
  * The host of every event. The platform serves SST (School of Science &
@@ -59,7 +60,7 @@ export function readEventFields(event = {}) {
   return {
     startTime: firstNonEmpty(event.start_time, event.startTime, meta.startTime),
     endTime: firstNonEmpty(event.end_time, event.endTime, meta.endTime),
-    organizer: firstNonEmpty(event.organizer, meta.organizer),
+    organizer: firstNonEmpty(Array.isArray(event.organizers) ? organizerLabel(event.organizers) : "", event.organizer, meta.organizer),
     contactInfo: firstNonEmpty(
       event.coordinator_contact,
       event.contactInfo,

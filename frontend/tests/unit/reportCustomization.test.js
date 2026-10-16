@@ -36,7 +36,7 @@ describe("Report customization options propagation in eventManager service", () 
   });
 
   it("passes customization in body of POST for single event report", async () => {
-    const mockBlob = { type: "application/pdf" };
+    const mockBlob = new Blob(["%PDF-1.4\n%%EOF"], { type: "application/pdf" });
     const mockResponse = {
       ok: true,
       blob: async () => mockBlob,
@@ -63,12 +63,13 @@ describe("Report customization options propagation in eventManager service", () 
       {
         method: "POST",
         body: customization,
+        signal: expect.any(AbortSignal),
       }
     );
   });
 
   it("omits body when no customization is passed for single event report", async () => {
-    const mockBlob = { type: "application/pdf" };
+    const mockBlob = new Blob(["%PDF-1.4\n%%EOF"], { type: "application/pdf" });
     const mockResponse = {
       ok: true,
       blob: async () => mockBlob,
@@ -81,12 +82,12 @@ describe("Report customization options propagation in eventManager service", () 
 
     expect(apiFetchSpy).toHaveBeenCalledWith(
       "/event-manager/events/evt456/report",
-      {}
+      { signal: expect.any(AbortSignal) }
     );
   });
 
   it("passes customization within body for multiple events consolidated report", async () => {
-    const mockBlob = { type: "application/pdf" };
+    const mockBlob = new Blob(["%PDF-1.4\n%%EOF"], { type: "application/pdf" });
     const mockResponse = {
       ok: true,
       blob: async () => mockBlob,
@@ -114,12 +115,13 @@ describe("Report customization options propagation in eventManager service", () 
           event_ids: ["e1", "e2"],
           customization,
         },
+        signal: expect.any(AbortSignal),
       }
     );
   });
 
   it("passes separate notice and report preferences", async () => {
-    const mockBlob = { type: "application/pdf" };
+    const mockBlob = new Blob(["%PDF-1.4\n%%EOF"], { type: "application/pdf" });
     const mockResponse = {
       ok: true,
       blob: async () => mockBlob,
@@ -146,6 +148,7 @@ describe("Report customization options propagation in eventManager service", () 
       {
         method: "POST",
         body: customization,
+        signal: expect.any(AbortSignal),
       }
     );
   });

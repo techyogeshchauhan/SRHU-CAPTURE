@@ -537,4 +537,16 @@ export const IconChevronDown = (p) => (
   </svg>
 );
 
+export const IconZoomIn = (p) => (
+  <svg {...base} {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5M11 8v6M8 11h6" />
+  </svg>
+);
 
+export const IconZoomOut = (p) => (
+  <svg {...base} {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5M8 11h6" />
+  </svg>
+);

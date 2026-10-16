@@ -503,15 +503,7 @@ def build_dean_report_entry(
     else:
         chosen = report_files.choose_photo_ids(event.get("report_photo_ids"), list(by_id))
 
-    photos, failures = [], 0
-    for pid in chosen:
-        data = report_files.read_file_bytes(by_id[pid], fs)
-        prepared = prepare_photo(data) if data else None
-        del data
-        if prepared:
-            photos.append(prepared)
-        else:
-            failures += 1
+    photos, failures = report_files.prepare_report_photos([by_id[pid] for pid in chosen], fs, prepare_photo)
 
     def name(row: dict) -> str:
         return row.get("original_name") or row.get("file_name") or "file"

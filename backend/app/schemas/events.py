@@ -259,12 +259,15 @@ class BulkEventIdsRequest(BaseModel):
     event_ids: list[str] = Field(min_length=1, max_length=MAX_BULK_OWN_EVENTS)
 
 
-def draft_details_error(event: dict) -> str | None:
+def draft_details_error(event: dict, request_type: type[EventCreateRequest] = EventCreateRequest) -> str | None:
     """Why a stored draft cannot be submitted as it stands, or None."""
     from pydantic import ValidationError
 
     try:
-        EventCreateRequest(**{key: event.get(key) for key in DRAFT_DETAIL_FIELDS})
+        fields = {key: event.get(key) for key in DRAFT_DETAIL_FIELDS}
+        if "organizers" in request_type.model_fields:
+            fields["organizers"] = event.get("organizers")
+        request_type(**fields)
     except ValidationError as error:
         first = error.errors()[0]
         field = str(first["loc"][0]).replace("_", " ") if first.get("loc") else "details"

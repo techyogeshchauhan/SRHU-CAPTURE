@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { apiJson } from "../../services/api";
+import { apiJson, isAbortError } from "../../services/api";
+import useLatestRead from "../../hooks/useLatestRead";
 import { useAuth } from "../../context/AuthContext";
 import SuperAdminShell from "../../components/superadmin/SuperAdminShell";
 import PageHero from "../../components/teacher/PageHero";
@@ -71,6 +72,7 @@ const formatActionLabel = (action) => {
 };
 
 export default function AuditLogs() {
+  const beginRead = useLatestRead();
   const navigate = useNavigate();
   const { profile, signOut } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -134,6 +136,7 @@ export default function AuditLogs() {
   };
 
   const loadLogs = useCallback(async () => {
+    const controller = beginRead();
     try {
       setLoading(true);
       setError("");
@@ -145,10 +148,12 @@ export default function AuditLogs() {
       if (actionFilter !== "all") params.set("action", actionFilter);
       if (urlQ) params.set("q", urlQ);
 
-      const res = await apiJson(`/superadmin/audit-logs?${params}`);
+      const res = await apiJson(`/superadmin/audit-logs?${params}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       setLogs(res?.logs || []);
       setTotal(res?.total || 0);
     } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) return;
       if (err?.status === 401) {
         navigate("/login", { replace: true });
         return;
@@ -156,9 +161,9 @@ export default function AuditLogs() {
       console.error("Load audit logs error:", err);
       setError(err?.message || "Failed to load audit logs.");
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  }, [skip, per, actionFilter, urlQ, navigate]);
+  }, [skip, per, actionFilter, urlQ, navigate, beginRead]);
 
   useEffect(() => {
     loadLogs();

@@ -23,7 +23,7 @@ from pydantic import ValidationError
 from pymongo.errors import DuplicateKeyError
 
 from app.config import settings
-from app.database import audit_logs, event_media, events, managed_events, users
+from app.database import audit_logs, event_media, events, managed_events, research_records, users
 from app.models.documents import (
     USER_PRIVATE_FIELDS,
     new_user_document,
@@ -643,11 +643,21 @@ def delete_user(
     owned = events.count_documents({"teacher_id": canonical_id}) + managed_events.count_documents(
         {"owner_id": canonical_id}
     )
-    if owned:
+    # Research records name their faculty member (and whoever entered them);
+    # deleting the account left them as "Unknown faculty member".
+    research = research_records.count_documents(
+        {"$or": [{"faculty_id": canonical_id}, {"created_by": canonical_id}]}
+    )
+    if owned or research:
+        held = [
+            f"{count} {label}{'s' if count != 1 else ''}"
+            for count, label in ((owned, "event"), (research, "research record"))
+            if count
+        ]
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"{user.get('name') or user.get('email')} has {owned} event{'s' if owned != 1 else ''}, "
+                f"{user.get('name') or user.get('email')} has {' and '.join(held)}, "
                 "so the account cannot be deleted permanently. Deactivate it instead: "
                 "they can no longer sign in, and their records are kept."
             ),

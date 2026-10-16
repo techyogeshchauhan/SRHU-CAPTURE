@@ -9,8 +9,10 @@ import { initialsOf } from "../common/roles";
 import {
   IconArrowUp,
   IconArchive,
+  IconAward,
   IconCalendar,
   IconGrid,
+  IconImagePlus,
   IconLogout,
   IconMoon,
   IconSun,
@@ -23,6 +25,8 @@ const NAV = [
   { key: "dashboard", to: "/dean/dashboard", label: "Dashboard", Icon: IconGrid },
   { key: "events", to: "/dean/events", label: "All Events", short: "Events", Icon: IconCalendar },
   { key: "archive", to: "/dean/archive", label: "Archive", Icon: IconArchive },
+  { key: "gallery", to: "/dean/gallery", label: "Gallery", Icon: IconImagePlus },
+  { key: "research", to: "/dean/research", label: "Research", Icon: IconAward },
   { key: "teachers", to: "/dean/teachers", label: "Teachers", Icon: IconUsers },
   { key: "profile", to: "/dean/profile", label: "My Profile", short: "Profile", Icon: IconUser },
 ];
@@ -105,7 +109,7 @@ export default function DeanShell({
   );
 
   return (
-    <div className={`hv-root ${locked ? "flex h-screen flex-col overflow-hidden" : "min-h-screen"}`}>
+    <div className={`hv-root panel-typography ${locked ? "flex h-screen flex-col overflow-hidden" : "min-h-screen"}`}>
       <a href="#main" className="skip-link">Skip to content</a>
 
       {!locked && (
@@ -133,7 +137,7 @@ export default function DeanShell({
 
           {/* The rail carries the same links, but the header row keeps them
               reachable when the rail is off-screen. */}
-          <nav className="hidden items-center gap-6 lg:flex" aria-label="Dean sections">
+          <nav className="hidden items-center gap-5 xl:flex" aria-label="Dean sections">
             {NAV.map((item) => (
               <Link
                 key={item.key}
@@ -141,7 +145,7 @@ export default function DeanShell({
                 aria-current={active === item.key ? "page" : undefined}
                 className="nav-link"
               >
-                {item.label}
+                {item.short || item.label}
               </Link>
             ))}
           </nav>

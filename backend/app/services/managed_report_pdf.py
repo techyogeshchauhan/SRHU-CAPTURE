@@ -443,7 +443,7 @@ def _details_rows(entry: "ReportEntry", customization: dict | None = None) -> li
 
     rows: list[tuple[str, str]] = []
 
-    if inc_basic or inc_sched or inc_other:
+    if inc_basic:
         rows.append(("Event Name", rich(event.get("event_name"))))
 
     if inc_basic:
@@ -475,7 +475,8 @@ def _details_rows(entry: "ReportEntry", customization: dict | None = None) -> li
                 rows.append((label, rich(value)))
 
     if inc_other:
-        val = str(event.get("expected_participants") or "").strip()
+        participants = event.get("expected_participants")
+        val = str(participants).strip() if participants is not None else ""
         if val:
             rows.append(("No. of Participants", rich(val)))
         social_url = str(event.get("social_network_url") or "").strip()
@@ -569,9 +570,9 @@ def _event_sections(
         ]
         number += 1
 
-    # Printed even when empty ("No description provided."), as before the
-    # sections became optional: an unticked box is the only way to drop it.
-    if inc_desc and (str(event.get("description") or "").strip() or not entry.omit_empty_fields):
+    # Custom reports include only supplied content; retain legacy placeholders
+    # for callers that did not request customization.
+    if inc_desc and (str(event.get("description") or "").strip() or (not opts and not entry.omit_empty_fields)):
         story += [
             CondPageBreak(SECTION_ROOM),
             Paragraph(f"{number}. Event Description & Objectives", styles["section"]),

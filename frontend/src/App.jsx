@@ -39,14 +39,21 @@ const CreateEvent = lazy(() => import("./pages/teacher/CreateEvent"));
 const MyEvents = lazy(() => import("./pages/teacher/MyEvents"));
 const TeacherEventDetails = lazy(() => import("./pages/teacher/EventDetails"));
 const TeacherProfile = lazy(() => import("./pages/teacher/Profile"));
+// Research portfolio: shared with the Event Manager panel, like the rest.
+const Research = lazy(() => import("./pages/teacher/Research"));
+const ResearchForm = lazy(() => import("./pages/teacher/ResearchForm"));
+const ResearchDetails = lazy(() => import("./pages/teacher/ResearchDetails"));
 
 // Dean
 const DeanDashboard = lazy(() => import("./pages/dean/DeanDashboard"));
 const DeanAllEvents = lazy(() => import("./pages/dean/AllEvents"));
 const DeanArchive = lazy(() => import("./pages/dean/Archive"));
+const DeanGallery = lazy(() => import("./pages/dean/Gallery"));
 const DeanEventDetails = lazy(() => import("./pages/dean/EventDetails"));
 const DeanProfile = lazy(() => import("./pages/dean/Profile"));
 const DeanTeachers = lazy(() => import("./pages/dean/Teachers"));
+const DeanResearch = lazy(() => import("./pages/dean/Research"));
+const DeanResearchDetails = lazy(() => import("./pages/dean/ResearchDetails"));
 
 // Super Admin
 const SuperAdminDashboard = lazy(
@@ -165,6 +172,40 @@ function App() {
               }
             />
 
+            {/* Research portfolio: a teacher records their own work. */}
+            <Route
+              path="/teacher/research"
+              element={
+                <ProtectedRoute allowedRoles={["teacher"]}>
+                  <Research />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/research/new"
+              element={
+                <ProtectedRoute allowedRoles={["teacher"]}>
+                  <ResearchForm />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/research/:recordId"
+              element={
+                <ProtectedRoute allowedRoles={["teacher"]}>
+                  <ResearchDetails />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/teacher/research/:recordId/edit"
+              element={
+                <ProtectedRoute allowedRoles={["teacher"]}>
+                  <ResearchForm key="edit" />
+                </ProtectedRoute>
+              }
+            />
+
             {/* ================= DEAN ================= */}
             <Route
               path="/dean"
@@ -198,10 +239,46 @@ function App() {
             />
 
             <Route
+              path="/dean/gallery"
+              element={
+                <ProtectedRoute allowedRoles={["dean"]}>
+                  <DeanGallery />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
               path="/dean/events/:eventId"
               element={
                 <ProtectedRoute allowedRoles={["dean"]}>
                   <DeanEventDetails />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/dean/research"
+              element={
+                <ProtectedRoute allowedRoles={["dean"]}>
+                  <DeanResearch />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dean/research/category/:category"
+              element={
+                <ProtectedRoute allowedRoles={["dean"]}>
+                  <DeanResearch />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route path="/dean/research/analytics" element={<Navigate to="/dean/research" replace />} />
+            <Route
+              path="/dean/research/:recordId"
+              element={
+                <ProtectedRoute allowedRoles={["dean"]}>
+                  <DeanResearchDetails />
                 </ProtectedRoute>
               }
             />
@@ -366,6 +443,61 @@ function App() {
                 </ProtectedRoute>
               }
             />
+
+            {/* Research portfolio: the Event Manager keeps it for every teacher. */}
+            <Route
+              path="/event_manager/research"
+              element={
+                <ProtectedRoute allowedRoles={["event_manager"]}>
+                  <PanelProvider panel={EVENT_MANAGER_PANEL}>
+                    <Research />
+                  </PanelProvider>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/event_manager/research/category/:category"
+              element={
+                <ProtectedRoute allowedRoles={["event_manager"]}>
+                  <PanelProvider panel={EVENT_MANAGER_PANEL}>
+                    <Research />
+                  </PanelProvider>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/event_manager/research/new"
+              element={
+                <ProtectedRoute allowedRoles={["event_manager"]}>
+                  <PanelProvider panel={EVENT_MANAGER_PANEL}>
+                    <ResearchForm />
+                  </PanelProvider>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/event_manager/research/:recordId"
+              element={
+                <ProtectedRoute allowedRoles={["event_manager"]}>
+                  <PanelProvider panel={EVENT_MANAGER_PANEL}>
+                    <ResearchDetails />
+                  </PanelProvider>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/event_manager/research/:recordId/edit"
+              element={
+                <ProtectedRoute allowedRoles={["event_manager"]}>
+                  <PanelProvider panel={EVENT_MANAGER_PANEL}>
+                    <ResearchForm key="edit" />
+                  </PanelProvider>
+                </ProtectedRoute>
+              }
+            />
+
+            <Route path="/event_manager/research/analytics" element={<Navigate to="/event_manager/research" replace />} />
+            <Route path="/event_manager/research/import" element={<Navigate to="/event_manager/research" replace />} />
 
             {/* Old /admin bookmarks from before the superadmin rename */}
             <Route

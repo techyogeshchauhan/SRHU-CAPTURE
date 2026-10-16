@@ -14,6 +14,9 @@ import hashlib
 import hmac
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 from bson import ObjectId
 from fastapi import HTTPException, status
@@ -148,16 +151,92 @@ def report_attachment_rows(
 # PHOTO BYTES
 # ============================================================
 
+REPORT_PHOTO_READ_SECONDS = 20
+REPORT_PHOTO_MAX_READ_SECONDS = 180
+REPORT_PHOTO_BYTES_PER_SECOND = 64 * 1024
+REPORT_PHOTO_WORKERS = 4
+
+
 def read_file_bytes(row: dict, fs) -> bytes | None:
     """The stored bytes of one upload, from R2 or GridFS; None if unreadable."""
+    started = time.monotonic()
+    size = received = 0
     try:
         if row.get("object_key"):
-            obj = r2_service._client().get_object(Bucket=settings.r2_bucket_name, Key=row["object_key"])
-            return obj["Body"].read()
+            size = int(row.get("file_size") or 0)
+
+            def read_budget(length):
+                # Camera originals can exceed 15 MB. Allow transfer time for
+                # their size, including bandwidth shared by concurrent reads,
+                # while retaining a hard cap and a separate socket idle timeout.
+                return min(REPORT_PHOTO_MAX_READ_SECONDS,
+                           REPORT_PHOTO_READ_SECONDS + max(0, length) / REPORT_PHOTO_BYTES_PER_SECOND)
+
+            deadline = started + read_budget(size)
+            # Sign locally, then stream without SDK whole-body buffering/retries.
+            # read1 performs at most one underlying read, allowing the total
+            # deadline to be checked even when bytes keep trickling in.
+            url = r2_service._client().generate_presigned_url(
+                "get_object", Params={"Bucket": settings.r2_bucket_name, "Key": row["object_key"]}, ExpiresIn=300,
+            )
+            # urllib does not log signed query strings as request URLs.
+            with urlopen(url, timeout=10) as response:
+                expected = response.headers.get("Content-Length")
+                if expected is not None:
+                    deadline = started + read_budget(max(size, int(expected)))
+                chunks = []
+                while True:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Report photo read deadline exceeded")
+                    chunk = response.read1(64 * 1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    received += len(chunk)
+                data = b"".join(chunks)
+                if expected is not None and len(data) != int(expected):
+                    raise TimeoutError("Incomplete report photo response")
+                return data
         return fs.get(ObjectId(str(row["file_id"]))).read()
+    except HTTPError as error:
+        error.close()
+        if error.code >= 500:
+            raise HTTPException(502, "Could not load report photos. Please try again.") from error
+        logger.warning("report_photo_unreadable file=%s status=%s", row.get("_id") or row.get("id"), error.code)
+        return None
+    except (URLError, TimeoutError, OSError) as error:
+        logger.warning("report_photo_timeout file=%s received=%d expected=%d elapsed_ms=%d cause=%s",
+                       row.get("_id") or row.get("id"), received, size,
+                       (time.monotonic() - started) * 1000, type(error).__name__)
+        raise HTTPException(504, "Could not load report photos. Please try again.") from error
+    except HTTPException:
+        raise
     except Exception as error:  # noqa: BLE001 - a missing photo must not sink the report
         logger.warning("report_photo_unreadable file=%s error=%s", row.get("_id") or row.get("id"), error)
         return None
+
+
+def prepare_report_photos(rows: list[dict | None], fs, prepare_photo) -> tuple[list, int]:
+    """Read/resize a bounded batch in parallel, preserving selected order.
+
+    Storage timeouts fail the report instead of silently omitting selected photos.
+    Original bytes are released as each worker returns its resized image.
+    """
+    if not rows:
+        return [], 0
+
+    def prepare(row):
+        data = read_file_bytes(row, fs) if row else None
+        return prepare_photo(data) if data else None
+
+    pool = ThreadPoolExecutor(max_workers=min(REPORT_PHOTO_WORKERS, len(rows)))
+    futures = [pool.submit(prepare, row) for row in rows]
+    try:
+        prepared = [future.result() for future in futures]
+    finally:
+        # Do not keep fetching queued photos after a storage failure.
+        pool.shutdown(wait=True, cancel_futures=True)
+    return [photo for photo in prepared if photo is not None], sum(photo is None for photo in prepared)
 
 
 # ============================================================

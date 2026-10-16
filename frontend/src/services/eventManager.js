@@ -59,6 +59,10 @@ export const saveReportPhotos = (id, photoIds, api = BASE) =>
  * offers an "Open report" button, which is a fresh click the blocker allows.
  */
 export const REPORT_READY_EVENT = "campus:report-ready";
+// Large camera originals are transferred and resized before the PDF is ready.
+// Keep the entire operation bounded, with room for several photo batches.
+export const REPORT_DOWNLOAD_TIMEOUT_MS = 300_000;
+export const REPORT_TIMEOUT_MESSAGE = "Report download timed out. Please try again.";
 
 function saveBlob(blob, fileName) {
   const pdf = blob.type === "application/pdf" ? blob : new Blob([blob], { type: "application/pdf" });
@@ -86,9 +90,37 @@ function saveBlob(blob, fileName) {
 }
 
 async function fetchReport(path, options, fallbackName) {
-  const response = await apiFetch(path, options);
-  if (!response.ok) throw await errorFromResponse(response, "Could not generate the report.");
-  return saveBlob(await response.blob(), fileNameFromResponse(response) || fallbackName);
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new Error(REPORT_TIMEOUT_MESSAGE));
+    }, REPORT_DOWNLOAD_TIMEOUT_MS);
+  });
+  const download = async () => {
+    const response = await apiFetch(path, { ...options, signal: controller.signal });
+    if (!response.ok) throw await errorFromResponse(response, "Could not generate the report. Please try again.");
+    const blob = await response.blob();
+    if ((await blob.slice(0, 5).text()) !== "%PDF-") {
+      throw new Error("The server did not return a PDF. Please try again.");
+    }
+    controller.signal.throwIfAborted();
+    return saveBlob(blob, fileNameFromResponse(response) || fallbackName);
+  };
+  try {
+    // Bound token refresh, response headers AND body transfer, so caller finally
+    // blocks run even when a dependency never settles. Late responses can't save.
+    return await Promise.race([download(), timeout]);
+  } catch (error) {
+    if (timedOut) throw new Error(REPORT_TIMEOUT_MESSAGE);
+    if (error?.status === 0 || error instanceof TypeError) throw new Error("Could not download the report. Check your connection and try again.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

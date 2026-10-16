@@ -18,6 +18,9 @@ from app.routers import (
     events,
     files,
     reports,
+    research,
+    research_showcases,
+    research_tools,
     superadmin,
     users,
 )
@@ -36,6 +39,19 @@ logger = logging.getLogger(__name__)
 
 INDEX_RETRY_INITIAL_SECONDS = 5
 INDEX_RETRY_MAX_SECONDS = 300
+
+
+def _settle_manager_research() -> None:
+    """Record Event Manager research submissions still waiting for the Dean
+    (made before they were recorded directly). Never blocks startup."""
+    from app.routers.research import record_waiting_manager_submissions
+
+    try:
+        settled = record_waiting_manager_submissions()
+        if settled:
+            logger.info("research_manager_submissions_recorded count=%d", len(settled))
+    except Exception as error:  # pragma: no cover - depends on the environment
+        logger.warning("research_manager_submissions_not_recorded error=%s", error)
 
 
 def _retry_indexes_forever(stop: threading.Event) -> None:
@@ -81,6 +97,7 @@ async def lifespan(_: FastAPI):
     try:
         ensure_indexes()
         logger.info("mongodb_indexes_ready db=%s", settings.mongodb_db_name)
+        _settle_manager_research()
     except Exception as error:  # pragma: no cover - depends on the environment
         logger.error("mongodb_index_setup_failed error=%s -- retrying in background", error)
         threading.Thread(
@@ -217,6 +234,11 @@ app.include_router(files.router)
 
 # Event Manager role: events recorded and reported without Dean review
 app.include_router(event_manager.router)
+
+# Research portfolio: Event Managers and teachers record, the Dean verifies
+app.include_router(research.router)
+app.include_router(research_tools.router)
+app.include_router(research_showcases.router)
 
 
 # ============================================================

@@ -11,6 +11,7 @@ import { usePanel } from "./panel";
 import ReportReadyPrompt from "./ReportReadyPrompt";
 import {
   IconArrowUp,
+  IconAward,
   IconGrid,
   IconList,
   IconLogout,
@@ -27,6 +28,7 @@ const NAV = [
   { key: "dashboard", to: "/dashboard", label: "Dashboard", Icon: IconGrid },
   { key: "create", to: "/create-event", label: "Create Event", Icon: IconPlus },
   { key: "events", to: "/my-events", label: "My Events", Icon: IconList },
+  { key: "research", to: "/research", label: "Research", Icon: IconAward },
   { key: "profile", to: "/profile", label: "My Profile", Icon: IconUser },
 ];
 
@@ -101,7 +103,7 @@ export default function TeacherShell({
     profile?.designation?.trim() || profile?.department?.trim() || panel.roleLabel;
 
   return (
-    <div className={`hv-root ${locked ? "flex h-screen flex-col overflow-hidden" : "min-h-screen"}`}>
+    <div className={`hv-root ${panel.role === "event_manager" ? "panel-typography" : ""} ${locked ? "flex h-screen flex-col overflow-hidden" : "min-h-screen"}`}>
       <a href="#main" className="skip-link">Skip to content</a>
 
       {!locked && (

@@ -14,8 +14,12 @@ from app.models.documents import new_faculty_coordinator_document
 from app.schemas.common import normalize_phone
 from app.services.event_types import (
     clean_event_type_name,
+    find_event_type,
     list_event_type_names,
     resolve_event_type,
+)
+from app.services.event_type_management import (
+    event_type_usage, list_manageable_types, migrate_event_type,
 )
 from app.utils.auth import get_current_user, require_role
 from app.utils.serializers import serialize_many
@@ -58,12 +62,51 @@ def add_event_type(
     user = get_current_user(authorization)
     require_role(user, "teacher", "event_manager")
 
+    if payload.name.casefold() == "uncategorized" and not find_event_type(payload.name):
+        raise HTTPException(409, "Uncategorized is reserved for events moved from deleted types.")
     name = resolve_event_type(payload.name, created_by=user["id"])
+    if not find_event_type(name):
+        raise HTTPException(503, "Could not save the event type. Please try again.")
     return {
         "success": True,
         "event_type": name,
         "event_types": list_event_type_names(),
     }
+
+
+@router.get("/event-types/manage")
+def manage_event_types(authorization: str | None = Header(default=None)):
+    user = get_current_user(authorization)
+    require_role(user, "event_manager")
+    return {"success": True, "event_types": list_manageable_types(user)}
+
+
+@router.get("/event-types/{type_id}/usage")
+def get_event_type_usage(type_id: str, authorization: str | None = Header(default=None)):
+    user = get_current_user(authorization)
+    require_role(user, "event_manager")
+    return {"success": True, **event_type_usage(type_id, user)}
+
+
+@router.patch("/event-types/{type_id}")
+def edit_event_type(type_id: str, payload: EventTypeCreateRequest,
+                    authorization: str | None = Header(default=None)):
+    user = get_current_user(authorization)
+    require_role(user, "event_manager")
+    return migrate_event_type(type_id, user, name=payload.name)
+
+
+class EventTypeDeleteRequest(BaseModel):
+    # Explicit null means Uncategorized; an omitted field must never delete.
+    destination_id: str | None = Field(...)
+
+
+@router.delete("/event-types/{type_id}")
+def delete_event_type(type_id: str, payload: EventTypeDeleteRequest,
+                      authorization: str | None = Header(default=None)):
+    user = get_current_user(authorization)
+    require_role(user, "event_manager")
+    return migrate_event_type(type_id, user, destination_id=payload.destination_id, delete=True)
 
 
 # ============================================================

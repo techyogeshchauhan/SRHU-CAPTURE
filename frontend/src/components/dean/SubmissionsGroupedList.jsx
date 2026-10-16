@@ -15,6 +15,7 @@ import {
   groupSubmissionsByStatus,
 } from "../../utils/submissionGrouping";
 import useEventReportDownload from "../../hooks/useEventReportDownload";
+import ReportCustomizationModal from "../common/ReportCustomizationModal";
 import {
   IconArrowRight,
   IconCalendar,
@@ -117,6 +118,7 @@ export default function SubmissionsGroupedList({
     downloadSingle,
     downloadBulk,
     canDownload,
+    reportModalProps,
   } = useEventReportDownload();
 
   useEffect(() => {
@@ -679,6 +681,7 @@ export default function SubmissionsGroupedList({
       {/* ------------------------------------------------------------------
           BULK VIEW MODAL: Review Selected Submissions (Default fallback)
       ------------------------------------------------------------------ */}
+      <ReportCustomizationModal {...reportModalProps} />
       <Modal
         open={showBulkViewModal}
         onClose={() => setShowBulkViewModal(false)}

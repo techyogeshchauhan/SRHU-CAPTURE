@@ -17,6 +17,7 @@ from fastapi import (
     status,
 )
 from pymongo import ASCENDING, DESCENDING
+from app.services.event_dashboard import dashboard_events
 
 from app.database import (
     event_documents,
@@ -56,7 +57,7 @@ from app.schemas.event_manager import ReportPhotosRequest
 from app.schemas.uploads import DirectUploadSignRequest, DirectUploadStartRequest
 from app.services import email_service, report_files
 from app.services.audit_service import log_audit_event
-from app.services.event_types import resolve_event_type
+from app.services.event_types import resolve_event_type, write_event_with_type
 from app.services.event_fields import (
     many_with_legacy_metadata,
     with_legacy_metadata,
@@ -247,6 +248,7 @@ def update_event(
     *,
     history: dict | None = None,
     expected_status: str | None = None,
+    session=None,
 ) -> dict | None:
     """Apply `changes`, and append `history` to the audit trail in the same
     update, so a status change and its record can never exist one without
@@ -269,12 +271,14 @@ def update_event(
         query,
         update,
         return_document=True,
+        **({"session": session} if session else {}),
     )
     if not res and _should_include_managed_events():
         res = managed_events.find_one_and_update(
             query,
             update,
             return_document=True,
+            **({"session": session} if session else {}),
         )
     return res
 
@@ -1135,6 +1139,238 @@ def get_event_media(
         "event_id": event_id,
         "media": media,
         "total": len(media),
+    }
+
+
+# ============================================================
+# GALLERY: EVERY EVENT WITH PHOTOS OR VIDEOS, AS ALBUMS
+#
+# /dean/gallery?media_type=image&status_bucket=approved&skip=0&limit=25
+#
+# One album per event that has at least one photo or video, newest event first,
+# with the event's details, the tally of photos and videos, and a signed cover
+# photo for the thumbnail. Reuses the Dean's status / type / date filters
+# (_dean_event_query), so a gallery view and an All Events view under the
+# same filters match event for event.
+# ============================================================
+
+GALLERY_MEDIA_TYPES = ("image", "video")
+
+# Only what a gallery header shows -- not descriptions or history, which
+# the modal fetches when an album is clicked.
+_GALLERY_EVENT_FIELDS = {
+    "_id": 1,
+    "event_name": 1,
+    "event_type": 1,
+    "event_type_label": 1,
+    "event_date": 1,
+    "start_time": 1,
+    "end_time": 1,
+    "venue": 1,
+    "status": 1,
+    "teacher_id": 1,
+    "owner_id": 1,
+    "owner_name": 1,
+    "created_at": 1,
+}
+
+
+def _gallery_events(q, event_type, status_bucket, source, start_date, end_date, media_type):
+    """The gallery's events under the Dean's filters, newest first.
+
+    Returns ``(with_media, counts, media_filter)``: (event, media collection)
+    pairs for every event with at least one file of the kind on show, the
+    photo / video tally per event id, and the media query for that kind.
+    Shared by the album view (/dean/gallery) and the photo wall
+    (/dean/gallery/photos) so the two always show the same events.
+    """
+    query = _dean_event_query(None, event_type, q, status_bucket, start_date=start_date, end_date=end_date)
+    use_events, use_managed = event_sources(source)
+    kind = (media_type or "").strip().lower()
+    if kind and kind not in GALLERY_MEDIA_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown media type.")
+
+    # Each source pairs an event collection with its media collection.
+    sources = []
+    if use_events:
+        sources.append((events, event_media))
+    if use_managed:
+        sources.append((managed_events, managed_event_media))
+
+    candidates: list[tuple[dict, object]] = []
+    media_filter = {"media_type": kind} if kind else {}
+    counts: dict[str, dict[str, int]] = {}
+    for event_collection, media_collection in sources:
+        found = serialize_many(event_collection.find(query, _GALLERY_EVENT_FIELDS))
+        if not found:
+            continue
+        ids = [item["id"] for item in found]
+        # Return one tally per event/kind instead of transferring every media
+        # row to Python, including files far beyond the requested gallery page.
+        for row in media_collection.aggregate([
+            {"$match": {"event_id": {"$in": ids}, **media_filter}},
+            {"$group": {"_id": {"event_id": "$event_id", "media_type": "$media_type"}, "count": {"$sum": 1}}},
+        ]):
+            group = row["_id"]
+            tally = counts.setdefault(str(group.get("event_id")), {"image": 0, "video": 0})
+            row_kind = "video" if str(group.get("media_type") or "").lower() == "video" else "image"
+            tally[row_kind] += row["count"]
+        candidates.extend((item, media_collection) for item in found)
+
+    # Only events with something to show, newest event first.
+    with_media = [(item, coll) for item, coll in candidates if item["id"] in counts]
+    with_media.sort(
+        key=lambda pair: (str(pair[0].get("event_date") or ""), str(pair[0].get("created_at") or "")),
+        reverse=True,
+    )
+    return with_media, counts, media_filter
+
+
+@router.get("/dean/gallery")
+def get_gallery(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    event_type: str | None = Query(default=None),
+    status_bucket: str | None = Query(default=None, max_length=20),
+    source: str | None = Query(default=None, max_length=20),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+    # "image" or "video"; anything else (or nothing) means both.
+    media_type: str | None = Query(default=None, max_length=10),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=25, ge=1, le=100),
+):
+    user = get_current_user(authorization)
+    check_event_viewer(user)
+    with_media, counts, _ = _gallery_events(q, event_type, status_bucket, source, start_date, end_date, media_type)
+
+    totals = {
+        "events": len(with_media),
+        "photos": sum(counts[item["id"]]["image"] for item, _ in with_media),
+        "videos": sum(counts[item["id"]]["video"] for item, _ in with_media),
+    }
+
+    total = len(with_media)
+    page_pairs = with_media[skip:skip + limit]
+    page_events = [item for item, _ in page_pairs]
+
+    # One cover per album: its first photo, whatever kind of media is on
+    # show, so a video-only filter still pictures an event that has photos.
+    # Only the covers are signed, and only for this page.
+    covers: dict[str, dict] = {}
+    for media_collection in {id(coll): coll for _, coll in page_pairs}.values():
+        ids = [item["id"] for item, coll in page_pairs if coll is media_collection]
+        cursor = media_collection.aggregate([
+            {"$match": {"event_id": {"$in": ids}, "media_type": "image"}},
+            {"$sort": {"created_at": ASCENDING}},
+            {"$group": {"_id": "$event_id", "cover": {"$first": "$$ROOT"}}},
+        ])
+        for row in cursor:
+            item = serialize(row["cover"])
+            key = str(item.get("event_id"))
+            if key not in covers:
+                covers[key] = item
+    covers = {
+        key: {
+            "id": item.get("id"),
+            "file_name": item.get("file_name"),
+            "media_url": absolutize(request, item, "media_url").get("media_url"),
+        }
+        for key, item in covers.items()
+    }
+
+    attach_teachers(page_events)
+
+    groups = [
+        {
+            "event": item,
+            "photos": counts[item["id"]]["image"],
+            "videos": counts[item["id"]]["video"],
+            "cover": covers.get(item["id"]),
+        }
+        for item in page_events
+    ]
+
+    return {
+        "success": True,
+        "groups": groups,
+        "total": total,
+        "count": len(groups),
+        "has_more": skip + len(groups) < total,
+        "skip": skip,
+        "limit": limit,
+        "totals": totals,
+    }
+
+
+@router.get("/dean/gallery/photos")
+def get_gallery_photos(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    event_type: str | None = Query(default=None),
+    status_bucket: str | None = Query(default=None, max_length=20),
+    source: str | None = Query(default=None, max_length=20),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+    media_type: str | None = Query(default=None, max_length=10),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=48, ge=1, le=120),
+):
+    """Every photo and video of the filtered events as one wall, newest event
+    first, a page at a time -- so the Dean can look through everything without
+    opening event after event.
+
+    Only the page's events are read for their files, and only the page's files
+    are signed: the counts already tell which events a page spans.
+    """
+    user = get_current_user(authorization)
+    check_event_viewer(user)
+    with_media, counts, media_filter = _gallery_events(q, event_type, status_bucket, source, start_date, end_date, media_type)
+
+    def size(item):
+        return counts[item["id"]]["image"] + counts[item["id"]]["video"]
+
+    total = sum(size(item) for item, _ in with_media)
+
+    # Which events the page [skip, skip + limit) falls in, and from where.
+    spans: list[tuple[dict, object, int]] = []
+    position = 0
+    for item, coll in with_media:
+        n = size(item)
+        if position + n > skip and position < skip + limit:
+            spans.append((item, coll, max(0, skip - position)))
+        position += n
+        if position >= skip + limit:
+            break
+
+    attach_teachers([item for item, _, _ in spans])
+    items: list[dict] = []
+    for item, coll, offset in spans:
+        cursor = coll.find({"event_id": item["id"], **media_filter}).sort("created_at", ASCENDING)
+        for media in serialize_many(page(cursor, offset, limit - len(items))):
+            if len(items) >= limit:
+                break
+            media = absolutize(request, media, "media_url")
+            media["event"] = {
+                "id": item["id"],
+                "event_name": item.get("event_name"),
+                "event_date": item.get("event_date"),
+                "event_type": item.get("event_type"),
+                "status": item.get("status"),
+                "teacher_name": item.get("teacher_name"),
+            }
+            items.append(media)
+
+    return {
+        "success": True,
+        "items": items,
+        "total": total,
+        "count": len(items),
+        "has_more": skip + len(items) < total,
+        "skip": skip,
+        "limit": limit,
     }
 
 
@@ -2011,9 +2247,25 @@ def get_teacher_events(
     ),
     skip: int | None = Query(default=None, ge=0),
     limit: int | None = Query(default=None, ge=1, le=1000),
+    dashboard: bool = Query(default=False),
+    reminders: bool = Query(default=False),
 ):
     user = get_current_user(authorization)
     require_role(user, "teacher")
+
+    scope = {"teacher_id": user["id"], "archived_at": None}
+    if dashboard:
+        return dashboard_events(events, scope)
+    if reminders:
+        # The reminder engine only uses today/tomorrow, excluding draft and
+        # rejected events. Preserve description metadata for its time label.
+        from app.schemas.events import campus_now
+        today = campus_now().date()
+        rows = serialize_many(events.find({
+            **scope, "event_date": {"$in": [today.isoformat(), (today + timedelta(days=1)).isoformat()]},
+            "status": {"$nin": ["draft", "rejected"]},
+        }, {"event_name": 1, "event_date": 1, "location": 1, "status": 1, "description": 1}))
+        return {"success": True, "events": rows, "total": len(rows), "count": len(rows)}
 
     event_list, total = paginate(
         events,
@@ -2090,8 +2342,13 @@ def create_teacher_event(
         ],
     )
 
-    result = events.insert_one(document)
-    document["_id"] = result.inserted_id
+    def insert(name, session):
+        document["event_type"] = name
+        return events.insert_one(document, **({"session": session} if session else {})).inserted_id
+
+    document["_id"] = write_event_with_type(
+        events, payload.event_type, created_by=user["id"], operation=insert,
+    )
 
     if not payload.save_as_draft:
         announce_to_deans(document, "submitted", user)
@@ -2220,8 +2477,14 @@ def update_teacher_event(
 
     # Filtered on the status just checked: if a Dean decided in between, the
     # edit must not silently undo the decision.
-    updated = update_event(
-        event_id, changes, history=history, expected_status=previous_status
+    def save(name, session):
+        changes["event_type"] = name
+        return update_event(
+            event_id, changes, history=history, expected_status=previous_status, session=session,
+        )
+
+    updated = write_event_with_type(
+        events, payload.event_type, created_by=user["id"], operation=save,
     )
 
     if not updated:

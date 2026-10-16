@@ -35,6 +35,7 @@ import useTableQuery from "../../hooks/useTableQuery";
 import SubmissionsGroupedList from "../../components/dean/SubmissionsGroupedList";
 import { bulkEvents } from "../../services/deanTeachers";
 import useEventReportDownload from "../../hooks/useEventReportDownload";
+import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
 
 /**
  * A row's overflow menu for secondary actions. Rendered into <body> with fixed
@@ -374,6 +375,7 @@ function AllEvents() {
     downloadSingle,
     downloadBulk,
     canDownload,
+    reportModalProps,
   } = useEventReportDownload();
 
   useEffect(() => {
@@ -414,20 +416,26 @@ function AllEvents() {
   // ============================================================
 
   const loadControllerRef = useRef(null);
+  const eventsRef = useRef(events);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => { eventsRef.current = events; }, [events]);
 
   useEffect(() => () => loadControllerRef.current?.abort(), []);
 
-  const loadEvents = useCallback(async () => {
+  const loadEvents = useCallback(async (append = false) => {
+    const more = append === true;
     loadControllerRef.current?.abort();
     const controller = new AbortController();
     loadControllerRef.current = controller;
 
     try {
-      setLoading(true);
+      if (more) setLoadingMore(true);
+      else { setLoading(true); setLoadingMore(false); }
       setError("");
 
       const params = new URLSearchParams({
-        limit: "1000",
+        skip: String(more ? eventsRef.current.length : 0),
+        limit: "100",
       });
       if (query.date) params.set("event_date", query.date);
       if (query.startDate) params.set("start_date", query.startDate);
@@ -452,16 +460,17 @@ function AllEvents() {
           // ignore
         }
       }
-      setEvents(data?.events || []);
+      setEvents((previous) => more
+        ? [...previous, ...(data?.events || []).filter((item) => !previous.some((old) => old.id === item.id))]
+        : data?.events || []);
       setTotal(data?.total || 0);
       setEventCounts(data?.counts || { all: totalAll });
     } catch (err) {
       if (controller.signal.aborted || isAbortError(err)) return;
       handleApiError(err, "Failed to load events", "Load events error");
-      setEvents([]);
-      setTotal(0);
+      if (!more) { setEvents([]); setTotal(0); }
     } finally {
-      if (loadControllerRef.current === controller) setLoading(false);
+      if (loadControllerRef.current === controller) { setLoading(false); setLoadingMore(false); }
     }
     // handleApiError is stable for the lifetime of the page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1044,13 +1053,17 @@ function AllEvents() {
           </div>
         </div>
 
-        {/* Warning Banner if total > loaded events (1,000 cap reached) (Requirement 2) */}
+        {/* Fetch another bounded page while retaining open groups/selection. */}
         {total > visibleEvents.length && (
           <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs sm:text-sm text-amber-800 dark:text-amber-200">
             <IconAlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
             <span>
-              Showing first {visibleEvents.length.toLocaleString()} of {total.toLocaleString()}. Narrow your filters.
+                Showing {visibleEvents.length.toLocaleString()} of {total.toLocaleString()}. Bulk actions apply to selected loaded events.
             </span>
+              <button type="button" className="btn btn-ghost btn-sm ml-auto shrink-0"
+                disabled={loading || loadingMore} onClick={() => loadEvents(true)}>
+                {loadingMore ? "Loading…" : "Load more events"}
+              </button>
           </div>
         )}
 
@@ -1584,6 +1597,7 @@ function AllEvents() {
         )}
       </Modal>
 
+      <ReportCustomizationModal {...reportModalProps} />
       <DateRangeModal
         open={showDateRangeModal}
         onClose={() => setShowDateRangeModal(false)}
