@@ -139,15 +139,20 @@ CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN
 # wrote, so it is split off before the description is printed.
 METADATA_PATTERN = re.compile(r"\s*<!--CC_METADATA:([\s\S]*?)-->")
 
-def metadata_value(meta: dict, key: str) -> str:
-    """A blob field for the report, with the host department defaulting to SST.
+REPORT_HOST_DEPARTMENT = "Computer Science and Engineering, School of Science and Technology"
 
-    The event form no longer asks for a host department (the platform is SST
-    only), so an event without one is reported under the default host.
-    """
+
+def report_department(value: str | None = None) -> str:
+    """Expand the legacy host abbreviation only when displaying a report."""
+    department = str(value or "").strip() or settings.default_host_department.strip()
+    return REPORT_HOST_DEPARTMENT if not department or department.casefold() == "sst" else department
+
+
+def metadata_value(meta: dict, key: str) -> str:
+    """A report metadata field, using the host's full name for its department."""
     value = str(meta.get(key) or "").strip()
-    if not value and key == "department":
-        return settings.default_host_department
+    if key == "department":
+        return report_department(value)
     return value
 
 

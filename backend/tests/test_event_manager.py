@@ -523,10 +523,12 @@ class ReportTests(EventManagerTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers["content-type"], "application/pdf")
         text = pdf_text(response.content)
-        for expected in ("Himalayan Robotics Expo", "Main Auditorium", "Dr. Rao", "150 students", "SST",
+        for expected in ("Himalayan Robotics Expo", "Main Auditorium", "Dr. Rao", "150 students", "Computer Science and Engineering,",
                          "10:00 AM", "Student robots on show.", "Event Photos", "Uploaded Notices", "Uploaded Attachments",
                          "agenda.pdf", "Asha Verma"):
             self.assertIn(expected, text)
+        self.assertIn("Computer Science and Engineering, School of Science and Technology", " ".join(text.split()))
+        self.assertNotIn("SST", text)
         self.assertNotIn("CC_METADATA", text)
         for word in ("Approv", "Pending", "Rejected", "Status"):
             self.assertNotIn(word, text)

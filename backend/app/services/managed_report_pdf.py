@@ -45,7 +45,6 @@ from reportlab.platypus import (
 )
 from reportlab.platypus.tableofcontents import TableOfContents
 
-from app.config import settings
 from app.services.report_pdf import (
     CONTENT_WIDTH,
     LABEL_FILL,
@@ -65,6 +64,7 @@ from app.services.report_pdf import (
     format_date,
     format_date_range,
     format_time_range,
+    report_department,
     rich,
 )
 
@@ -465,7 +465,7 @@ def _details_rows(entry: "ReportEntry", customization: dict | None = None) -> li
     if inc_basic:
         department = str(event.get("department") or "").strip()
         if department or not omit_empty:
-            rows.append(("Department", rich(department or settings.default_host_department)))
+            rows.append(("Department", rich(report_department(department))))
         for key, label in (
             ("organizer", "Organiser"),
             ("coordinator_contact", "Contact"),
@@ -727,12 +727,13 @@ def _cover_page(entries: list[ReportEntry], styles, issued: str, prepared_by: di
     prepared = rich(preparer.get("name") or "Not available")
     if preparer.get("email"):
         prepared += f"<br/><font color='#5B6475'>{escape(preparer['email'])}</font>"
-    departments = sorted({str(e.event.get("department") or "").strip() for e in entries} - {""})
+    departments = sorted({report_department(e.event["department"]) for e in entries
+                          if str(e.event.get("department") or "").strip()})
 
     rows = [
         ("Events covered", f"{count} event{'s' if count != 1 else ''}"),
         ("Period", escape(period)),
-        ("Department", rich(", ".join(departments) or "SST")),
+        ("Department", rich(", ".join(departments) or report_department())),
         ("Prepared by", prepared),
         ("Issued on", issued),
     ]

@@ -268,13 +268,14 @@ class DraftVisibilityTests(unittest.TestCase):
 
 
 class HostDepartmentTests(unittest.TestCase):
-    """The event form no longer asks for a host department: SST is the default."""
+    """Reports print the full name of the default host department."""
 
-    def test_missing_department_reports_as_sst(self) -> None:
+    def test_missing_department_reports_as_full_host_name(self) -> None:
         from app.services.report_pdf import metadata_value
 
-        self.assertEqual(metadata_value({}, "department"), "SST")
-        self.assertEqual(metadata_value({"department": "   "}, "department"), "SST")
+        expected = "Computer Science and Engineering, School of Science and Technology"
+        self.assertEqual(metadata_value({}, "department"), expected)
+        self.assertEqual(metadata_value({"department": "   "}, "department"), expected)
 
     def test_a_saved_department_is_kept(self) -> None:
         from app.services.report_pdf import metadata_value
