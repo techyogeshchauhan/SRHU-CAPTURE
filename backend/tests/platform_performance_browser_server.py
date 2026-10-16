@@ -32,7 +32,8 @@ def configure():
             collection.insert_one({"_id": ObjectId(), "event_name": f"Platform {role} {n:03d}",
                 "teacher_id" if role == "teacher" else "owner_id": fixture["sessions"][role]["user"]["id"],
                 "status": ["draft", "pending", "approved", "rejected", "revoked", "completed"][n % 6],
-                "event_type": "Workshop", "event_date": f"2026-10-{1 + n % 8:02d}",
+                "event_type": ["Workshop", "Seminar", "Community Outreach"][(n // 6) % 3],
+                "event_date": f"2026-10-{1 + n % 8:02d}",
                 "created_at": f"2026-10-{1 + n % 8:02d}T09:{n % 60:02d}:00Z",
                 "description": "Performance fixture description. " * 40, "location": "Test room", "history": []})
     video_event = {"_id": ObjectId(), "event_name": "Platform video previews", "event_type": "Workshop",

@@ -76,6 +76,8 @@ const DATE_FILTERS = [
   { key: "custom", label: "Custom range" },
 ];
 
+const eventTypeOf = (item) => String(item.event_type || item.eventType || "").trim();
+
 /**
  * Table columns, ordered by how much each one tells the teacher at a glance.
  * Actions is pinned to the right edge, so on a narrow screen it is Venue —
@@ -200,6 +202,7 @@ function MyEvents() {
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
 
   const activeFilter = searchParams.get("filter") || "all";
+  const activeEventType = panel.role === "event_manager" ? searchParams.get("type") || "" : "";
 
   // Data state
   const [events, setEvents] = useState([]);
@@ -281,7 +284,15 @@ function MyEvents() {
     // Replace, not push: a filter is a view of this page, not a place of its
     // own, and pushing one entry per click buried the page the teacher
     // arrived from under a pile of stale filter states.
-    setSearchParams({ filter: tabKey }, { replace: true });
+    if (panel.role === "event_manager") {
+      setSearchParams((previous) => {
+        const next = new URLSearchParams(previous);
+        next.set("filter", tabKey);
+        return next;
+      }, { replace: true });
+    } else {
+      setSearchParams({ filter: tabKey }, { replace: true });
+    }
   };
 
   const handleClearFilters = () => {
@@ -295,6 +306,7 @@ function MyEvents() {
   const isFiltered =
     searchQuery.trim() !== "" ||
     activeFilter !== "all" ||
+    activeEventType !== "" ||
     dateFilter !== "all_time" ||
     customFromDate !== "" ||
     customToDate !== "";
@@ -363,6 +375,11 @@ function MyEvents() {
   }
     return items;
   }, [drafts, events, panel.approval]);
+
+  const eventTypeOptions = useMemo(() => [...new Set([
+    activeEventType,
+    ...allCombinedItems.map(eventTypeOf),
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b)), [allCombinedItems, activeEventType]);
 
   // Calculate tab counts. Drafts are counted from the combined list, not from
   // `drafts` alone: once a draft has a file attached it lives on the server and
@@ -440,13 +457,14 @@ function MyEvents() {
 
     // Evaluates combination of Search + Status + Date Filter (AND logic)
     return allCombinedItems.filter(
-      (item) => matchesSearch(item) && matchesStatus(item) && matchesDate(item)
+      (item) => (!activeEventType || eventTypeOf(item) === activeEventType)
+        && matchesSearch(item) && matchesStatus(item) && matchesDate(item)
     );
-  }, [allCombinedItems, searchQuery, activeFilter, dateFilter, customFromDate, customToDate]);
+  }, [allCombinedItems, searchQuery, activeFilter, activeEventType, dateFilter, customFromDate, customToDate]);
 
   // Browser-only drafts must participate in exactly the same filters and bulk
   // selections as server events. Page the merged view without losing selection.
-  const filterKey = JSON.stringify([searchQuery, activeFilter, dateFilter, customFromDate, customToDate]);
+  const filterKey = JSON.stringify([searchQuery, activeFilter, activeEventType, dateFilter, customFromDate, customToDate]);
   const [paging, setPaging] = useState({ key: filterKey, page: 1, per: 25 });
   if (paging.key !== filterKey) setPaging({ ...paging, key: filterKey, page: 1 });
   const currentPage = paging.key === filterKey ? Math.min(paging.page, Math.max(1, Math.ceil(filteredItems.length / paging.per))) : 1;
@@ -727,6 +745,26 @@ function MyEvents() {
                 </button>
               )}
             </div>
+
+            {panel.role === "event_manager" && (
+              <select
+                value={activeEventType}
+                onChange={(event) => {
+                  const type = event.target.value;
+                  setSearchParams((previous) => {
+                    const next = new URLSearchParams(previous);
+                    if (type) next.set("type", type);
+                    else next.delete("type");
+                    return next;
+                  }, { replace: true });
+                }}
+                aria-label="Filter by event type"
+                className="input w-full min-w-0 sm:w-auto sm:max-w-60"
+              >
+                <option value="">All event types</option>
+                {eventTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+            )}
 
             {/* Date range. A select rather than five chips: it carries the
                 same five choices in one control instead of a whole row. */}
