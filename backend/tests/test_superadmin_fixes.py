@@ -154,6 +154,28 @@ class SuperAdminFixesTests(unittest.TestCase):
         response = self.client.patch(f"/dean/events/{own}/stage?stage=completed", headers=self.auth(promoted))
         self.assertEqual(response.status_code, 403, response.text)
 
+    def test_the_events_page_downloads_as_excel(self) -> None:
+        from openpyxl import load_workbook
+
+        self.event("Xeno Completed Talk", "completed")
+        self.event("Xeno Pending Talk", "submitted")
+        self.managed("Xeno Recorded Seminar")
+        response = self.client.get(
+            "/superadmin/events/export.xlsx", params={"status": "approved", "q": "Xeno"}, headers=self.auth(self.superadmin)
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn(".xlsx", response.headers["content-disposition"])
+        sheet = load_workbook(io.BytesIO(response.content)).active
+        names = {row[1].value for row in sheet.iter_rows(min_row=5)}
+        self.assertEqual(names, {"Xeno Completed Talk", "Xeno Recorded Seminar"})
+
+        dean = self.client.get("/dean/events/export.xlsx", params={"q": "Xeno", "status_bucket": "pending"},
+                               headers=self.auth(self.dean))
+        self.assertEqual(dean.status_code, 200, dean.text)
+        sheet = load_workbook(io.BytesIO(dean.content)).active
+        self.assertEqual([row[0].value for row in sheet.iter_rows(min_row=5)], ["Xeno Pending Talk"])
+        self.assertEqual(sheet["M5"].value, "Asha Teacher")
+
 
 if __name__ == "__main__":
     unittest.main()

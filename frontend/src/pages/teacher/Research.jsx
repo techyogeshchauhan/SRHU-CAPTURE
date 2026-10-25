@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
+import DownloadExcelButton from "../../components/common/DownloadExcelButton";
 import Pagination from "../../components/common/Pagination";
 import Modal from "../../components/teacher/Modal";
 import PageHero from "../../components/teacher/PageHero";
 import TeacherShell from "../../components/teacher/TeacherShell";
 import { usePanel } from "../../components/teacher/panel";
 import { trackOf } from "../../components/teacher/status";
-import { IconAlertTriangle, IconAward, IconCheckCircle, IconDownload, IconPlus, IconTrash } from "../../components/teacher/icons";
+import {
+  IconAlertTriangle,
+  IconAward,
+  IconCheckCircle,
+  IconDownload,
+  IconPlus,
+  IconTrash,
+  IconUsers,
+} from "../../components/teacher/icons";
+import FacultyFilterNotice from "../../components/research/FacultyFilterNotice";
 import ResearchFilters from "../../components/research/ResearchFilters";
 import ResearchNav from "../../components/research/ResearchNav";
 import { OutcomesDuePanel } from "../../components/research/ResearchNotices";
@@ -21,6 +31,7 @@ import {
   bulkDeleteResearch,
   deletableResearchIds,
   downloadResearchCv,
+  exportNaac,
   exportResearch,
   listResearch,
 } from "../../services/research";
@@ -104,6 +115,7 @@ export default function Research() {
           status: query.status,
           category: query.category,
           academic_year: query.year,
+          faculty_id: manager ? query.faculty : undefined,
           q: query.q,
           skip: query.skip,
           limit: query.per,
@@ -117,7 +129,7 @@ export default function Research() {
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [query.status, query.category, query.year, query.q, query.skip, query.per]);
+  }, [query.status, query.category, query.year, query.faculty, query.q, query.skip, query.per, manager]);
 
   useEffect(() => {
     load();
@@ -125,7 +137,7 @@ export default function Research() {
   }, [load]);
 
   // A new filter is a new list: start the selection again.
-  const filterKey = `${query.status}|${query.category}|${query.year}|${query.q}`;
+  const filterKey = `${query.status}|${query.category}|${query.year}|${query.faculty}|${query.q}`;
   const [selectionFor, setSelectionFor] = useState(filterKey);
   if (selectionFor !== filterKey) {
     setSelectionFor(filterKey);
@@ -166,6 +178,7 @@ export default function Research() {
         status: query.status,
         category: query.category,
         academic_year: query.year,
+        faculty_id: query.faculty,
         q: query.q,
       });
       setSelected(new Map(body.records.map((record) => [record.id, {
@@ -238,7 +251,7 @@ export default function Research() {
       setRecording(false);
     }
   };
-  const filtered = Boolean(query.q || query.category || query.year || query.status !== "all");
+  const filtered = Boolean(query.q || query.category || query.year || query.faculty || query.status !== "all");
 
   return (
     <TeacherShell
@@ -248,7 +261,7 @@ export default function Research() {
       railNote={
         manager
           ? "Maintain and present the faculty's research portfolio."
-          : "Your journal and conference papers, patents, books and achievements, verified by the Dean."
+          : "Your journal and conference papers, patents, books, funded projects and achievements, verified by the Dean."
       }
     >
       <div className={`mx-auto w-full max-w-wrap px-5 sm:px-8 ${manager ? "py-6" : "py-8"}`}>
@@ -260,32 +273,43 @@ export default function Research() {
           subtitle={
             manager
               ? undefined
-              : "Your journal and conference papers, patents, books and achievements, with the evidence behind them. Records the Event Manager adds for you appear here too."
+              : "Your journal and conference papers, patents, books, funded projects and achievements. Records the Event Manager adds for you appear here too."
           }
           actions={
             <>
               {manager && routeCategory && (
                 <Link to={recordsPath} className="btn btn-ghost">Back to research page</Link>
               )}
+              {manager && (
+                <Link to={`${panel.base}/research/faculty`} className="btn btn-ghost" title="How much research each faculty member has">
+                  <IconUsers />
+                  Faculty-wise
+                </Link>
+              )}
               <Link to={`${panel.base}/research/new`} className="btn btn-primary">
                 <IconPlus />
                 Add research
               </Link>
-              {!manager && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    run("excel", () =>
-                      exportResearch({ status: query.status, category: query.category, academic_year: query.year, q: query.q }),
-                    )
-                  }
-                  disabled={Boolean(busy)}
-                  className="btn btn-ghost"
-                  title="The records as filtered below, one sheet per category"
-                >
-                  {busy === "excel" ? <span className="spin h-4 w-4" /> : <IconDownload />}
-                  Excel
-                </button>
+              <DownloadExcelButton
+                onDownload={() =>
+                  exportResearch({
+                    status: query.status,
+                    category: query.category,
+                    academic_year: query.year,
+                    faculty_id: manager ? query.faculty : undefined,
+                    q: query.q,
+                  })
+                }
+                onError={setError}
+                title="The records as filtered below, one sheet per category"
+              />
+              {manager && (
+                <DownloadExcelButton
+                  label="NAAC Excel"
+                  onDownload={() => exportNaac(query.year)}
+                  onError={setError}
+                  title="Recorded research in NAAC Criterion III format, for the chosen academic year"
+                />
               )}
               {!manager && profile?.id && (
                 <button
@@ -303,6 +327,13 @@ export default function Research() {
           }
         />
         <ResearchNav base={`${panel.base}/research`} active="records" role={panel.role} />
+        {manager && query.faculty && (
+          <FacultyFilterNotice
+            name={records[0]?.faculty?.name}
+            facultyWise={`${panel.base}/research/faculty`}
+            onClear={() => setFilter("faculty", "")}
+          />
+        )}
         <OutcomesDuePanel base={`${panel.base}/research`} showFaculty={manager} />
 
         <div className={manager ? "mt-4" : "mt-6"}>
@@ -359,8 +390,8 @@ export default function Research() {
               {filtered
                 ? "Try another search, category or year — or clear the filters."
                 : manager
-                  ? "Add a journal or conference paper, patent, book or achievement for any teacher, attach its evidence and record it in the faculty portfolio."
-                  : "Add a journal or conference paper, patent, book or achievement, attach its evidence and send it to the Dean for verification."}
+                  ? "Add a journal or conference paper, patent, book, funded project or achievement for any teacher and record it in the faculty portfolio."
+                  : "Add a journal or conference paper, patent, book, funded project or achievement and send it to the Dean for verification."}
             </p>
             {!filtered && (
               <Link to={`${panel.base}/research/new`} className="btn btn-primary btn-sm mt-5">

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { submitterOf } from "../../components/common/submitter";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { apiFetch, apiJson, isAbortError } from "../../services/api";
+import { apiJson, isAbortError } from "../../services/api";
 import useLatestRead from "../../hooks/useLatestRead";
 import { useAuth } from "../../context/AuthContext";
 import SuperAdminShell from "../../components/superadmin/SuperAdminShell";
 import PageHero from "../../components/teacher/PageHero";
 import StatusChip from "../../components/teacher/StatusChip";
 import Pagination from "../../components/common/Pagination";
+import DownloadExcelButton from "../../components/common/DownloadExcelButton";
+import { downloadAccreditationExcel } from "../../services/downloads";
 import Modal from "../../components/teacher/Modal";
 import { trackOf } from "../../components/teacher/status";
 import {
@@ -177,35 +179,6 @@ export default function SuperAdminEvents() {
     }
   };
 
-  const [exporting, setExporting] = useState(false);
-
-  const handleExportCsv = async () => {
-    try {
-      setExporting(true);
-      setError("");
-      const params = new URLSearchParams();
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      if (urlQ) params.set("q", urlQ);
-
-      const res = await apiFetch(`/superadmin/events/export?${params}`);
-      if (!res.ok) throw new Error("Failed to export events");
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `events_naac_nirf_${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (err) {
-      console.error("Export CSV error:", err);
-      setError("Failed to export accreditation CSV.");
-    } finally {
-      setExporting(false);
-    }
-  };
-
   const handleLogout = async () => {
     await signOut();
     navigate("/login", { replace: true });
@@ -232,16 +205,18 @@ export default function SuperAdminEvents() {
                 {loading ? <span className="spin h-4 w-4" /> : <IconRefresh />}
                 Refresh
               </button>
-              <button
-                type="button"
-                onClick={handleExportCsv}
-                disabled={exporting}
+              <DownloadExcelButton
                 className="btn btn-primary"
-                title="Download full CSV dump for NAAC/NIRF accreditation"
-              >
-                {exporting ? <span className="spin h-4 w-4" /> : null}
-                Export (NAAC / NIRF)
-              </button>
+                label="Download Excel (NAAC / NIRF)"
+                onDownload={() =>
+                  downloadAccreditationExcel({
+                    status: statusFilter !== "all" ? statusFilter : undefined,
+                    q: urlQ,
+                  })
+                }
+                onError={setError}
+                title="The events as filtered below, in the NAAC / NIRF accreditation layout"
+              />
             </div>
           }
         />

@@ -5,8 +5,8 @@
  * what each may see -- and the Dean has `/dean/research/...`.
  */
 
-import { apiFetch, apiJson, apiUpload, errorFromResponse } from "./api";
-import { fileNameFromResponse } from "../utils/fileNames";
+import { apiJson, apiUpload } from "./api";
+import { downloadFile } from "./downloads";
 
 const query = (params = {}) => {
   const search = new URLSearchParams();
@@ -103,27 +103,11 @@ export const deanBulkVerifyResearch = (ids) =>
 
 // ---------------------------------------------------------------- files
 
-/**
- * Fetch a generated file (an Excel export, a PDF) with the login token and
- * hand it to the browser as a download. Resolves once the download starts.
- */
-export async function downloadFile(path, fallbackName) {
-  const response = await apiFetch(path);
-  if (!response.ok) throw await errorFromResponse(response, "The file could not be generated.");
-  const blob = await response.blob();
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileNameFromResponse(response) || fallbackName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => window.URL.revokeObjectURL(url), 1_000);
-}
+export { downloadFile };
 
-/** Excel of the author's filtered register. */
-export const exportResearch = (params) =>
-  downloadFile(`/research/export.xlsx${query(params)}`, "research-register.xlsx");
+/** Excel of the filtered register; with `faculty_id`, one faculty member's research. */
+export const exportResearch = (params, { dean = false } = {}) =>
+  downloadFile(`${dean ? "/dean" : ""}/research/export.xlsx${query(params)}`, "research-register.xlsx");
 
 /** The NAAC Criterion III workbook (Event Manager and Dean). */
 export const exportNaac = (academicYear, { dean = false } = {}) =>
@@ -137,6 +121,14 @@ export const downloadResearchCv = (facultyId, { dean = false } = {}) =>
   downloadFile(`${dean ? "/dean" : ""}/research/faculty/${facultyId}/cv.pdf`, "research-cv.pdf");
 
 // ---------------------------------------------------------------- tools
+
+/** Every faculty member with research, and their count per category. */
+export const researchFacultySummary = (params, { dean = false, signal } = {}) =>
+  apiJson(`${dean ? "/dean" : ""}/research/faculty-summary${query(params)}`, signal ? { signal } : undefined);
+
+/** The faculty-wise table as shown, as Excel. */
+export const exportFacultySummary = (params, { dean = false } = {}) =>
+  downloadFile(`${dean ? "/dean" : ""}/research/faculty-summary.xlsx${query(params)}`, "faculty-wise-research.xlsx");
 
 export const researchAnalytics = (params, { dean = false, signal } = {}) =>
   apiJson(`${dean ? "/dean" : ""}/research/analytics${query(params)}`, signal ? { signal } : undefined);

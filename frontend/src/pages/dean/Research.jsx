@@ -3,9 +3,9 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import DeanShell from "../../components/dean/DeanShell";
 import DateRangeModal from "../../components/common/DateRangeModal";
+import DownloadExcelButton from "../../components/common/DownloadExcelButton";
 import Modal from "../../components/teacher/Modal";
 import Pagination from "../../components/common/Pagination";
-import StatCard from "../../components/common/StatCard";
 import PageHero from "../../components/teacher/PageHero";
 import { trackOf } from "../../components/teacher/status";
 import {
@@ -13,8 +13,9 @@ import {
   IconAward,
   IconCalendar,
   IconTrash,
+  IconUsers,
 } from "../../components/teacher/icons";
-import CategoryIcon from "../../components/research/CategoryIcon";
+import FacultyFilterNotice from "../../components/research/FacultyFilterNotice";
 import ResearchNav from "../../components/research/ResearchNav";
 import ResearchFilters from "../../components/research/ResearchFilters";
 import ResearchRow from "../../components/research/ResearchRow";
@@ -22,25 +23,32 @@ import useResearchQuery from "../../components/research/useResearchQuery";
 import useShellProfile from "../../components/research/useShellProfile";
 import useResearchCategories from "../../hooks/useResearchCategories";
 import { isAbortError } from "../../services/api";
-import { deanBulkDeleteResearch, deanListResearch, deanResearchOverview } from "../../services/research";
+import {
+  deanBulkDeleteResearch,
+  deanListResearch,
+  deanResearchOverview,
+  exportNaac,
+  exportResearch,
+} from "../../services/research";
 import { GALLERY_PERIODS, periodOf, periodRange } from "../../utils/galleryAlbums";
 
-// The Dean sees what the Event Manager has submitted -- nothing to verify,
-// and no status of any kind.
+// The Dean's lists. What the Event Manager submitted is recorded as it is,
+// with no status and nothing to verify -- the page opens on it. A teacher's
+// own submission waits for the Dean, who verifies it or sends it back from
+// the record's page.
 const SUBMITTED = "event_manager";
-const CATEGORY_KPI_LABELS = {
-  journal: "Journal",
-  conference: "Conference",
-  patent: "Patent",
-  book: "Book / Book Chapter",
-  other: "Other Achievement",
+const DEAN_RESEARCH_TABS = [SUBMITTED, "submitted", "verified", "changes_requested", "rejected"];
+const DEAN_RESEARCH_TAB_LABELS = {
+  [SUBMITTED]: "Event Manager records",
+  submitted: "Teacher submissions",
+  verified: "Verified (teachers)",
+  changes_requested: "Sent back",
 };
 
 /**
  * The Dean's research page: every record the Event Manager has submitted,
- * newest research date first, with a period filter, database-driven category
- * counts, and search. The filters live in the URL,
- * so a filtered view can be shared.
+ * newest research date first, with a period filter, a category filter and
+ * search. The filters live in the URL, so a filtered view can be shared.
  */
 export default function Research() {
   const { category: routeCategory = "" } = useParams();
@@ -49,7 +57,9 @@ export default function Research() {
   const recordsPath = "/dean/research";
   const { profile, logout } = useShellProfile();
   const { categories, byKey } = useResearchCategories();
-  const { query, setFilter, setFilters, setPage, setPerPage, reset } = useResearchQuery({ status: "all", category: routeCategory });
+  const { query, setFilter, setFilters, setPage, setPerPage, reset } = useResearchQuery({ status: SUBMITTED, category: routeCategory });
+  // Anything else in the URL is not one of the Dean's lists.
+  const view = DEAN_RESEARCH_TABS.includes(query.status) ? query.status : SUBMITTED;
   const setResearchFilter = useCallback((name, value, options) => {
     if (name !== "category") {
       setFilter(name, value, options);
@@ -79,7 +89,7 @@ export default function Research() {
   const [notice, setNotice] = useState("");
   const [showRange, setShowRange] = useState(false);
   const [selected, setSelected] = useState(() => new Map());
-  const filterKey = `${query.category}|${query.year}|${query.q}|${query.from}|${query.to}|${query.skip}|${query.per}`;
+  const filterKey = `${view}|${query.category}|${query.year}|${query.q}|${query.from}|${query.to}|${query.faculty}|${query.skip}|${query.per}`;
   const [selectionFor, setSelectionFor] = useState(filterKey);
   if (selectionFor !== filterKey) {
     setSelectionFor(filterKey);
@@ -106,8 +116,9 @@ export default function Research() {
       q: query.q,
       start_date: query.from,
       end_date: query.to,
+      faculty_id: query.faculty,
     }),
-    [query.category, query.year, query.q, query.from, query.to],
+    [query.category, query.year, query.q, query.from, query.to, query.faculty],
   );
 
   const load = useCallback(async ({ refreshOverview = false } = {}) => {
@@ -134,7 +145,7 @@ export default function Research() {
       }
       const [list, figures] = await Promise.all([
         deanListResearch(
-          { ...filters, status: SUBMITTED, skip: query.skip, limit: query.per },
+          { ...filters, status: view, skip: query.skip, limit: query.per },
           { signal: controller.signal },
         ),
         overviewRef.current.promise,
@@ -148,27 +159,15 @@ export default function Research() {
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [filters, query.skip, query.per, invalidateOverview]);
+  }, [filters, view, query.skip, query.per, invalidateOverview]);
 
   useEffect(() => {
     load();
     return () => controllerRef.current?.abort();
   }, [load]);
 
-  // A figure opens its records under the same period, year and search.
-  const linkTo = (category = query.category) => {
-    const params = new URLSearchParams();
-    for (const [key, value] of [["q", query.q], ["year", query.year], ["from", query.from], ["to", query.to]]) {
-      if (value) params.set(key, value);
-    }
-    const text = params.toString();
-    const path = category ? `${recordsPath}/category/${encodeURIComponent(category)}` : recordsPath;
-    return `${path}${text ? `?${text}` : ""}`;
-  };
-
   const records = data?.records || [];
   const pageSelected = records.length > 0 && records.every((record) => selected.has(record.id));
-  const byCategory = overview?.by_category || {};
   const selectedCategory = categories.find((category) => category.key === query.category);
   const period = periodOf(query.from, query.to);
   const rangeLabel =
@@ -179,7 +178,31 @@ export default function Research() {
         : query.from
           ? `From ${query.from}`
           : `Until ${query.to}`;
-  const value = (n) => (overview ? n : "—");
+  const downloads = (
+    <>
+      <DownloadExcelButton
+        className="btn btn-ghost btn-sm shrink-0"
+        onDownload={() => exportResearch({ ...filters, status: view }, { dean: true })}
+        onError={setError}
+        title="The records as filtered below, one sheet per category"
+      />
+      <DownloadExcelButton
+        className="btn btn-ghost btn-sm shrink-0"
+        label="NAAC Excel"
+        onDownload={() => exportNaac(query.year, { dean: true })}
+        onError={setError}
+        title="Verified research in NAAC Criterion III format, for the chosen academic year"
+      />
+    </>
+  );
+  // The faculty-wise view, under the same period and year.
+  const facultyWise = (() => {
+    const params = new URLSearchParams();
+    for (const [key, given] of [["year", query.year], ["from", query.from], ["to", query.to]]) {
+      if (given) params.set(key, given);
+    }
+    return `${recordsPath}/faculty${params.size ? `?${params}` : ""}`;
+  })();
   const dateRangeControls = (
     <>
       <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Research date range">
@@ -264,12 +287,20 @@ export default function Research() {
           actions={!routeCategory && (
             <>
               {dateRangeControls}
+              <Link to={facultyWise} className="btn btn-ghost btn-sm shrink-0" title="How much research each faculty member has">
+                <IconUsers />
+                Faculty-wise
+              </Link>
+              {downloads}
             </>
           )}
         >
           {routeCategory && (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-wrap items-center gap-2">{dateRangeControls}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                {dateRangeControls}
+                {downloads}
+              </div>
               <Link to={recordsPath} className="btn btn-ghost self-start sm:self-auto">
                 Back to research page
               </Link>
@@ -277,36 +308,12 @@ export default function Research() {
           )}
         </PageHero>
         <ResearchNav base="/dean/research" active="records" role="dean" />
-
-        {/* ------------------------------- database-driven category KPIs */}
-        {!routeCategory && (
-          <section className="glass mt-4 p-4 sm:p-5" aria-labelledby="dean-research-overview-title">
-            <div className="mb-3">
-              <h2 id="dean-research-overview-title" className="h3 text-sm text-ink">Research by category</h2>
-              <p className="prose-muted mt-0.5 text-xs">
-                Select a category to view its records with the current filters.
-              </p>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {categories.map((category, index) => {
-                const label = CATEGORY_KPI_LABELS[category.key] || category.label || category.short || category.key;
-                const CategoryGlyph = (props) => <CategoryIcon category={category.key} {...props} />;
-                return (
-                  <StatCard
-                    key={category.key}
-                    compact
-                    index={index}
-                    to={linkTo(category.key)}
-                    label={label}
-                    value={value(byCategory[category.key] ?? 0)}
-                    Icon={CategoryGlyph}
-                    track={trackOf("approved")}
-                    hint={`View ${label.toLowerCase()} records`}
-                  />
-                );
-              })}
-            </div>
-          </section>
+        {query.faculty && (
+          <FacultyFilterNotice
+            name={records[0]?.faculty?.name}
+            facultyWise={facultyWise}
+            onClear={() => setFilter("faculty", "")}
+          />
         )}
 
         <div className="mt-4">
@@ -314,10 +321,12 @@ export default function Research() {
             query={query}
             setFilter={setResearchFilter}
             reset={clearResearchFilters}
-            tabs={[]}
+            tabs={DEAN_RESEARCH_TABS}
+            labels={DEAN_RESEARCH_TAB_LABELS}
+            counts={data?.counts}
             categories={categories}
-            years={overview?.academic_years || []}
-            defaultStatus="all"
+            years={data?.academic_years || overview?.academic_years || []}
+            defaultStatus={SUBMITTED}
             searchLabel="Search by title or teacher"
             searchPlaceholder="Search titles or teachers…"
           />
@@ -354,7 +363,11 @@ export default function Research() {
             </span>
             <p className="h3 text-ink">No research records here</p>
             <p className="prose-muted mt-1 max-w-md text-sm">
-              Research the Event Manager submits appears here. Try another period, category or search.
+              {view === SUBMITTED
+                ? "Research the Event Manager submits appears here. Try another period, category or search."
+                : view === "submitted"
+                  ? "No teacher is waiting for your review. Records teachers submit themselves appear here."
+                  : "Try another period, category or search."}
             </p>
           </div>
         ) : (
@@ -392,7 +405,7 @@ export default function Research() {
                   category={byKey[record.category]}
                   to={`/dean/research/${record.id}`}
                   showFaculty
-                  showStatus={false}
+                  showStatus={view !== SUBMITTED}
                   leading={(
                     <input
                       type="checkbox"

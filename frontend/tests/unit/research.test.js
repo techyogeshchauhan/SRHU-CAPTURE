@@ -109,6 +109,28 @@ describe("recordFacts", () => {
       "Principal Investigator",
     );
   });
+
+  it("shows funded projects, and the text typed in for Other", async () => {
+    const { recordFacts } = await import("../../src/utils/research");
+    expect(
+      recordFacts({
+        category: "funded_project",
+        details: { funding_type: "Extramural", funding_agency: "SERB", amount: 1200000, role: "Principal Investigator" },
+      }),
+    ).toBe("Extramural · SERB · ₹12,00,000 · Principal Investigator");
+    expect(
+      recordFacts({
+        category: "conference",
+        details: { conference: "Summit", presentation_type: "Other", presentation_type_other: "Panel discussion", mode: "Online" },
+      }),
+    ).toBe("Summit · Panel discussion · Online");
+    expect(recordFacts({ category: "patent", details: { ipr_type: "Copyright", office: "India (IPO)" } })).toBe(
+      "Copyright · India (IPO)",
+    );
+    expect(recordFacts({ category: "other", details: { kind: "Session chair", awarded_by: "IEEE" } })).toBe(
+      "Session chair · IEEE",
+    );
+  });
 });
 
 describe("summariseHistory", () => {

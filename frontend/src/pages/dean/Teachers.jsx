@@ -13,6 +13,8 @@ import { ROLE_TRACK, initialsOf } from "../../components/common/roles";
 import { DESIGNATION_SUGGESTIONS } from "../../utils/designations";
 import { isValidPhone, normalizePhoneInput } from "../../utils/phone";
 import { bulkTeachers, createTeacher, fetchTeacherIds, sendInvites } from "../../services/deanTeachers";
+import { downloadTeachersExcel } from "../../services/downloads";
+import DownloadExcelButton from "../../components/common/DownloadExcelButton";
 import CredentialReport, { OutcomeChip, Tally } from "../../components/dean/CredentialReport";
 import ImportTeachersModal from "../../components/dean/ImportTeachersModal";
 import {
@@ -579,6 +581,11 @@ export default function Teachers() {
                 <IconUpload />
                 Import from Excel
               </button>
+              <DownloadExcelButton
+                onDownload={() => downloadTeachersExcel(Object.fromEntries(filterParams))}
+                onError={setError}
+                title="The teachers matching these filters, as an Excel file"
+              />
             </div>
           }
         />

@@ -25,13 +25,6 @@ export default function ResearchFacts({ record, category }) {
         ))}
       </dl>
 
-      {record.abstract && (
-        <div className="mt-5 border-t hairline pt-4">
-          <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-muted">Abstract / summary</p>
-          <p className="mt-1 whitespace-pre-line text-sm leading-relaxed text-ink">{record.abstract}</p>
-        </div>
-      )}
-
       {record.link && (
         <a
           href={record.link}

@@ -8,7 +8,7 @@ import Modal from "../../components/teacher/Modal";
 import PageHero from "../../components/teacher/PageHero";
 import StatusChip from "../../components/teacher/StatusChip";
 import StatCard from "../../components/common/StatCard";
-import { programShare } from "../../components/dean/programShades";
+import { programShareFromCounts } from "../../components/dean/programShades";
 import { trackOf } from "../../components/teacher/status";
 import useThemeTokens from "../../components/theme/useThemeTokens";
 import { formatRowDate } from "../../utils/submissionGrouping";
@@ -40,6 +40,10 @@ import {
 const TOTAL_TRACK = "#0EA5E9"; // sky
 
 const DEAN_EVENTS_CACHE_KEY = "cc_dean_events_count";
+
+// The review queue shows at most this many waiting events, oldest first; the
+// tab's count is the full number from the stats.
+const REVIEW_QUEUE_LIMIT = 200;
 
 function getCachedEventsCount() {
   try {
@@ -130,9 +134,12 @@ export default function DeanDashboard() {
       pending_events: 0,
       approved_events: 0,
       rejected_events: 0,
+      event_types: {},
     };
   });
 
+  // Only the events waiting for the Dean: the counts and the chart come from
+  // /dean/dashboard/stats, so the dashboard never downloads every event.
   const [events, setEvents] = useState([]);
 
   // Signed-in Dean, used for the header and rail account blocks.
@@ -193,6 +200,7 @@ export default function DeanDashboard() {
         total_events: total,
         pending_events: data?.pending_events || 0,
         approved_events: data?.approved_events || 0,
+        event_types: data?.event_types || {},
         rejected_events: data?.rejected_events || 0,
       });
     } catch (err) {
@@ -221,14 +229,12 @@ export default function DeanDashboard() {
       setLoadingEvents(true);
       setError("");
 
-      const data = await apiJson("/dean/events", { signal: controller.signal });
+      const data = await apiJson(`/dean/events?status_bucket=pending&limit=${REVIEW_QUEUE_LIMIT}`, {
+        signal: controller.signal,
+      });
 
       if (controller.signal.aborted) return;
-      const loadedEvents = data?.events || [];
-      if (loadedEvents.length > 0) {
-        setCachedEventsCount(loadedEvents.length);
-      }
-      setEvents(loadedEvents);
+      setEvents(data?.events || []);
     } catch (err) {
       if (controller.signal.aborted || isAbortError(err)) return;
       console.error("Events error:", err);
@@ -380,9 +386,10 @@ export default function DeanDashboard() {
   // ============================================
 
   const programMix = useMemo(
-    () => programShare(events, tokens.accent),
-    [events, tokens.accent]
+    () => programShareFromCounts(stats.event_types, tokens.accent),
+    [stats.event_types, tokens.accent]
   );
+  const programTotal = programMix.reduce((sum, entry) => sum + entry.value, 0);
 
   const handleTypeSelect = (name) => {
     if (!name) return;
@@ -432,13 +439,13 @@ export default function DeanDashboard() {
   const decisionEvent = decision?.event;
 
   const resolvedEventCount = useMemo(() => {
-    const live = stats.total_events || events.length;
+    const live = stats.total_events;
     if (live > 0) return live;
     const cached = getCachedEventsCount();
     if (cached !== null && cached > 0) return cached;
     if (busy) return undefined;
     return 0;
-  }, [stats.total_events, events.length, busy]);
+  }, [stats.total_events, busy]);
 
   // ============================================
   // RENDER
@@ -551,7 +558,7 @@ export default function DeanDashboard() {
           >
             <IconInbox className="h-4 w-4" />
             Submissions
-            <span className="tab-count">{reviewQueueEvents.length}</span>
+            <span className="tab-count">{Math.max(stats.pending_events, reviewQueueEvents.length)}</span>
           </button>
         </div>
 
@@ -593,7 +600,7 @@ export default function DeanDashboard() {
               </div>
 
               <div className="p-6">
-                {loadingEvents ? (
+                {loadingStats ? (
                   <div className="flex h-65 flex-col items-center justify-center gap-3">
                     <span className="spin h-10 w-10 text-accent" />
                     <p className="prose-muted text-sm">Loading programs…</p>
@@ -652,7 +659,7 @@ export default function DeanDashboard() {
                             style={{ fontFamily: "Sora, system-ui, sans-serif" }}
                           >
                             <tspan x="50%" dy="-6" fontSize="28" fontWeight="700">
-                              {events.length}
+                              {programTotal}
                             </tspan>
                             <tspan
                               x="50%"
@@ -690,7 +697,7 @@ export default function DeanDashboard() {
                     {/* The rows */}
                     <ul className="w-full min-w-0 flex-1 space-y-1">
                       {programMix.map((entry) => {
-                        const total = events.length || 1;
+                        const total = programTotal || 1;
                         const pct = Math.round((entry.value / total) * 100);
 
                         return (

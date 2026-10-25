@@ -14,7 +14,6 @@ import {
   IconInfo,
   IconSave,
   IconTrash,
-  IconUploadCloud,
 } from "../../components/teacher/icons";
 import EvidencePanel from "../../components/research/EvidencePanel";
 import { DuplicateNotice, RemindersNotice } from "../../components/research/ResearchNotices";
@@ -29,8 +28,8 @@ import {
   getResearch,
   removeEvidence,
   submitResearch,
-  uploadEvidence,
 } from "../../services/research";
+import { authorNames } from "../../utils/research";
 
 const when = (iso) => {
   const date = new Date(iso);
@@ -51,18 +50,14 @@ export default function ResearchDetails() {
   // The Event Manager's pages use the Dean's spacing (16px between blocks).
   const sectionGap = manager ? "mt-4" : "mt-6";
   const { profile, logout } = useShellProfile();
-  const { byKey, limits } = useResearchCategories();
+  const { byKey } = useResearchCategories();
 
   const [record, setRecord] = useState(null);
   const [loadError, setLoadError] = useState("");
-  // What the form just did (saved, recorded, submitted), and anything that
-  // did not go through: a file that failed to upload, a refused submission.
+  // What the form just did (saved, recorded, submitted), and a submission
+  // it could not make.
   const [notice, setNotice] = useState(location.state?.notice || (location.state?.created ? "created" : ""));
-  const [actionError, setActionError] = useState(() => {
-    const failed = location.state?.failed || [];
-    if (failed.length) return `Saved, but ${failed.length === 1 ? "a file" : "some files"} did not upload — ${failed.join("; ")}. Attach ${failed.length === 1 ? "it" : "them"} again below.`;
-    return location.state?.submitError || "";
-  });
+  const [actionError, setActionError] = useState(location.state?.submitError || "");
   const [submitting, setSubmitting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -89,10 +84,6 @@ export default function ResearchDetails() {
   const categoryActive = Boolean(record && byKey[record.category]);
   const perms = record?.permissions || {};
   const missing = record?.missing || [];
-  // Research evidence is optional for Event Manager submissions. Teachers
-  // keep the configurable evidence requirement.
-  const evidenceRequired = !manager && Boolean(limits?.evidence_required);
-  const noEvidence = evidenceRequired && (record?.evidence || []).length === 0;
   const state = record?.verification_status;
 
   // The button is never greyed out: a disabled button reads as broken.
@@ -101,11 +92,6 @@ export default function ResearchDetails() {
     setActionError("");
     if (missing.length > 0) {
       setActionError(`Fill in ${missing.join(", ")} first — “Fill in” opens the form with them marked.`);
-      return;
-    }
-    if (noEvidence) {
-      setActionError("Attach at least one piece of evidence first, in the Evidence section below.");
-      document.getElementById("evidence")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
     setSubmitting(true);
@@ -146,12 +132,6 @@ export default function ResearchDetails() {
     } finally {
       setFlagging(false);
     }
-  };
-
-  const upload = async (file, tag, onProgress) => {
-    const body = await uploadEvidence(recordId, file, tag, { onProgress });
-    setRecord(body.record);
-    if (state === "verified") setNotice("reverification");
   };
 
   const dropEvidence = async (entry) => {
@@ -239,10 +219,14 @@ export default function ResearchDetails() {
               title={record.title}
               subtitle={
                 manager
-                  ? record.faculty?.name || "Unknown teacher"
-                  : record.created_by !== record.faculty_id && record.created_by_name
-                    ? `Entered by ${record.created_by_name} (Event Manager)`
-                    : undefined
+                  ? authorNames(record) || "Unknown teacher"
+                  : perms.co_author
+                    ? `Co-authored with ${authorNames(record)} · only the Event Manager can change it`
+                    : record.co_faculty?.length
+                      ? `With ${record.co_faculty.map((person) => person.name).join(", ")}`
+                      : record.created_by !== record.faculty_id && record.created_by_name
+                        ? `Entered by ${record.created_by_name} (Event Manager)`
+                        : undefined
               }
               actions={
                 <div className="flex flex-wrap gap-2">
@@ -322,7 +306,7 @@ export default function ResearchDetails() {
                           ? "Ready to send to the Dean?"
                           : "Resubmit for verification"}
                     </h2>
-                    {missing.length === 0 && !noEvidence ? (
+                    {missing.length === 0 ? (
                       <p className="prose-muted mt-1 text-sm">
                         {manager
                           ? "Everything is here. Recording adds it to the portfolio straight away — no Dean verification."
@@ -336,12 +320,6 @@ export default function ResearchDetails() {
                             <span>
                               Still to fill in: <span className="font-medium">{missing.join(", ")}</span>
                             </span>
-                          </li>
-                        )}
-                        {noEvidence && (
-                          <li className="flex items-start gap-2">
-                            <IconUploadCloud className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
-                            <span>Attach at least one piece of evidence.</span>
                           </li>
                         )}
                       </ul>
@@ -395,24 +373,20 @@ export default function ResearchDetails() {
                   </div>
                 </section>
 
-                <section id="evidence" className="glass scroll-mt-24 p-5 sm:p-6">
-                  <h2 className="h3 text-base text-ink">Evidence</h2>
-                  <p className="prose-muted mt-0.5 text-xs">
-                    The paper, certificates or letters behind this record.
-                    {evidenceRequired ? " At least one is needed before it is submitted." : " Optional."}
-                    {state === "verified" && !manager && " Changing it sends the record back for verification."}
-                  </p>
-                  <div className="mt-4">
-                    <EvidencePanel
-                      required={evidenceRequired}
-                      evidence={record.evidence}
-                      tags={category?.evidence_tags || []}
-                      limits={limits}
-                      onUpload={upload}
-                      onRemove={dropEvidence}
-                    />
-                  </div>
-                </section>
+                {/* Research takes no uploads now; files attached before stay
+                    listed, and can still be opened or removed. */}
+                {record.evidence?.length > 0 && (
+                  <section id="evidence" className="glass scroll-mt-24 p-5 sm:p-6">
+                    <h2 className="h3 text-base text-ink">Evidence</h2>
+                    <p className="prose-muted mt-0.5 text-xs">
+                      Files attached to this record earlier.
+                      {state === "verified" && !manager && " Removing one sends the record back for verification."}
+                    </p>
+                    <div className="mt-4">
+                      <EvidencePanel evidence={record.evidence} onRemove={dropEvidence} />
+                    </div>
+                  </section>
+                )}
               </div>
             </div>
           </>

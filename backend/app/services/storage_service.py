@@ -532,6 +532,9 @@ def delete_stored(record: dict | None) -> None:
     except Exception:
         logger.exception("Could not delete stored file for record %s", record.get("_id"))
         _record_orphan(record)
+    # A photo's preview (app.services.media_previews) goes with it.
+    if isinstance(record.get("preview"), dict):
+        delete_stored(record["preview"])
 
 
 def absolute_url(request: Request, path: str | None) -> str | None:
@@ -596,11 +599,11 @@ def delete_event_cascade(event_id: str) -> None:
     if object_id is not None:
         events.delete_one({"_id": object_id})
 
-    for media in event_media.find({"event_id": event_id}, {"file_id": 1, "object_key": 1}):
+    for media in event_media.find({"event_id": event_id}, {"file_id": 1, "object_key": 1, "preview": 1}):
         delete_stored(media)
     event_media.delete_many({"event_id": event_id})
 
-    for document in event_documents.find({"event_id": event_id}, {"file_id": 1, "object_key": 1}):
+    for document in event_documents.find({"event_id": event_id}, {"file_id": 1, "object_key": 1, "preview": 1}):
         delete_stored(document)
     event_documents.delete_many({"event_id": event_id})
 
@@ -627,11 +630,11 @@ def delete_events_cascade(event_ids: list[str]) -> None:
     if object_ids:
         events.delete_many({"_id": {"$in": object_ids}})
 
-    for media in event_media.find({"event_id": {"$in": ids}}, {"file_id": 1, "object_key": 1}):
+    for media in event_media.find({"event_id": {"$in": ids}}, {"file_id": 1, "object_key": 1, "preview": 1}):
         delete_stored(media)
     event_media.delete_many({"event_id": {"$in": ids}})
 
-    for document in event_documents.find({"event_id": {"$in": ids}}, {"file_id": 1, "object_key": 1}):
+    for document in event_documents.find({"event_id": {"$in": ids}}, {"file_id": 1, "object_key": 1, "preview": 1}):
         delete_stored(document)
     event_documents.delete_many({"event_id": {"$in": ids}})
 

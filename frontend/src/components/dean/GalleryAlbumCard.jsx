@@ -20,7 +20,8 @@ const GalleryAlbumCard = forwardRef(function GalleryAlbumCard(
   const [loadedUrl, setLoadedUrl] = useState(null);
   const [failedUrl, setFailedUrl] = useState(null);
 
-  const coverUrl = cover?.media_url || null;
+  // The small preview when the photo has one; the original otherwise.
+  const coverUrl = cover?.preview_url || cover?.media_url || null;
   const showCover = coverUrl && failedUrl !== coverUrl;
   const name = event.event_name || "Untitled event";
   const submitter = event.teacher_name

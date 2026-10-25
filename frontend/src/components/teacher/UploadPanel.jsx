@@ -602,7 +602,7 @@ export default function UploadPanel({
                       title={pItem.file_name}
                     >
                       <img
-                        src={pItem.media_url}
+                        src={pItem.preview_url || pItem.media_url}
                         alt={pItem.file_name}
                         className="h-full w-full object-cover"
                       />

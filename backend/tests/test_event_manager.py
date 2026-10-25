@@ -98,6 +98,10 @@ def _matches(doc: dict, query: dict) -> bool:
                 flags = re.I if "i" in cond.get("$options", "") else 0
                 if not isinstance(value, str) or not re.search(cond["$regex"], value, flags):
                     return False
+            if "$gte" in cond and not (value is not None and value >= cond["$gte"]):
+                return False
+            if "$lte" in cond and not (value is not None and value <= cond["$lte"]):
+                return False
         elif value != cond:
             return False
     return True
@@ -924,6 +928,80 @@ class PhotoLayoutTests(unittest.TestCase):
         )
         pdf = build_managed_report_pdf([entry]).getvalue()
         self.assertIn("https://api.example/event-manager/files/1?exp=1&sig=a", pdf_links(pdf))
+
+
+class MyEventsPagingTests(EventManagerTestCase):
+    """My Events asks for one filtered page, not every event."""
+
+    def page(self, token="mgr", **params):
+        response = self.call("GET", "/event-manager/events", token, params={"paged": "true", **params})
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    def test_one_page_with_counts_for_every_tab(self):
+        for n in range(5):
+            self.draft(event_name=f"Robotics Day {n}", event_type="Workshop" if n % 2 else "Seminar")
+        self.draft(token="mgr2", event_name="Someone else's event")
+        body = self.page(limit=2)
+        self.assertEqual((body["total"], body["count"], body["has_more"]), (5, 2, True))
+        self.assertEqual(body["counts"]["all"], 5)
+        self.assertEqual(body["counts"]["draft"], 5)
+        self.assertEqual(body["counts"]["approved"], 0)
+        self.assertEqual(body["event_types"], ["Seminar", "Workshop"])
+        second = self.page(limit=2, skip=2)
+        self.assertEqual(len({e["id"] for e in body["events"]} | {e["id"] for e in second["events"]}), 4)
+
+    def test_filters_run_on_the_server(self):
+        self.draft(event_name="Robotics Expo", event_type="Workshop", location="Hall A", event_date=past_date(3))
+        self.draft(event_name="Poetry Evening", event_type="Cultural", location="Robotics Lab", event_date=past_date(40))
+        self.draft(event_name="Chess Meet", event_type="Sports")
+        self.assertEqual(self.page(q="robotics")["total"], 2)  # the name, or the venue
+        self.assertEqual(self.page(q="SST")["total"], 3)  # the department, in the description
+        self.assertEqual([e["event_name"] for e in self.page(event_type="Cultural")["events"]], ["Poetry Evening"])
+        recent = self.page(start_date=past_date(10))
+        self.assertEqual({e["event_name"] for e in recent["events"]}, {"Robotics Expo", "Chess Meet"})
+        self.assertEqual(self.page(status="pending")["total"], 0)
+        self.assertEqual(self.call("GET", "/event-manager/events", params={"paged": "true", "status": "nope"}).status_code, 400)
+        self.assertEqual(self.call("GET", "/event-manager/events", params={"paged": "true", "start_date": "10-02-2026"}).status_code, 400)
+
+    def test_the_filtered_list_downloads_as_excel(self):
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        self.draft(event_name="Robotics Expo")
+        self.draft(event_name="Poetry Evening")
+        response = self.call("GET", "/event-manager/events/export.xlsx", params={"q": "poetry"})
+        self.assertEqual(response.status_code, 200, response.text)
+        sheet = load_workbook(BytesIO(response.content)).active
+        self.assertEqual([row[0].value for row in sheet.iter_rows(min_row=5)], ["Poetry Evening"])
+
+    def test_without_paged_the_old_list_is_unchanged(self):
+        self.draft(event_name="Robotics Expo")
+        body = self.call("GET", "/event-manager/events").json()
+        self.assertNotIn("counts", body)
+        self.assertEqual(body["total"], 1)
+
+
+class ExportTests(EventManagerTestCase):
+    def test_my_events_download_holds_the_listed_events_only(self):
+        first = self.draft(event_name="Alpha Seminar")
+        second = self.draft(event_name="=Beta Workshop")
+        someone_elses = self.draft(token="mgr2", event_name="Gamma Talk")
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        response = self.call("POST", "/event-manager/events/export.xlsx",
+                             json={"event_ids": [second["id"], first["id"], someone_elses["id"]]})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("my-events-", response.headers["content-disposition"])
+        sheet = load_workbook(BytesIO(response.content)).active
+        names = [row[0].value for row in sheet.iter_rows(min_row=5)]
+        self.assertEqual(names, ["=Beta Workshop", "Alpha Seminar"])  # in the list's order, nobody else's
+        self.assertEqual(sheet["A5"].data_type, "s")
+        self.assertEqual(self.call("POST", "/event-manager/events/export.xlsx", "teacher",
+                                   json={"event_ids": [first["id"]]}).status_code, 403)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,8 @@
+# What the test suite needs on top of the application.
+# Install with: pip install -r requirements-dev.txt
+-r requirements.txt
+
+# Reads the generated report PDFs back in tests/test_report_department.py.
+pypdf==5.4.0
+# Time-zone data for zoneinfo on Windows, which has none of its own.
+tzdata==2026.1

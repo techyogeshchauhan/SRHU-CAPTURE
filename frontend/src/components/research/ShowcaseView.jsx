@@ -6,7 +6,7 @@ import { IconSparkle } from "../teacher/icons";
 import CategoryIcon from "./CategoryIcon";
 import { OutcomeChip, VerificationChip } from "./ResearchChips";
 
-const ORDER = ["journal", "conference", "patent", "book", "other"];
+const ORDER = ["journal", "conference", "patent", "book", "funded_project", "other"];
 
 function when(iso) {
   const date = new Date(iso);

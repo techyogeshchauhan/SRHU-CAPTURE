@@ -49,6 +49,10 @@ def _matches(doc, query):
             if not any(_matches(doc, clause) for clause in wanted):
                 return False
             continue
+        if key == "$and":
+            if not all(_matches(doc, clause) for clause in wanted):
+                return False
+            continue
         value = _get(doc, key)
         if isinstance(wanted, dict) and any(op.startswith("$") for op in wanted):
             for op, arg in wanted.items():
@@ -74,7 +78,11 @@ def _matches(doc, query):
                         return False
         else:
             actual = None if value is _MISSING else value
-            if actual != wanted:
+            # As MongoDB does: a value matches an array that holds it.
+            if isinstance(actual, list) and not isinstance(wanted, list):
+                if wanted not in actual:
+                    return False
+            elif actual != wanted:
                 return False
     return True
 
@@ -182,6 +190,7 @@ PATENT = {
     "record_date": "2026-03-10",
     "outcome_status": "filed",
     "details": {
+        "ipr_type": "Patent",
         "inventors": "Meera Joshi, Arjun Rawat",
         "office": "India (IPO)",
         "application_number": "202611012345",
@@ -285,7 +294,7 @@ class ResearchTest(ResearchFixture, unittest.TestCase):
     def test_categories_describe_every_kind_of_research(self):
         body = self.call("GET", "/research/categories", "teacher")
         keys = [c["key"] for c in body["categories"]]
-        self.assertEqual(keys, ["journal", "conference", "patent", "book", "other"])
+        self.assertEqual(keys, ["journal", "conference", "patent", "book", "funded_project", "other"])
         self.assertNotIn("project", keys)
         patent = next(c for c in body["categories"] if c["key"] == "patent")
         self.assertEqual([o["key"] for o in patent["outcomes"]][:3], ["filed", "published", "granted"])
@@ -304,12 +313,12 @@ class ResearchTest(ResearchFixture, unittest.TestCase):
 
     def test_each_active_category_accepts_a_minimal_record(self):
         samples = {
-            "journal": {"author_position": "First author", "journal": "Clinical Research", "indexing": ["Scopus"]},
+            "journal": {"author_position": "First author / Corresponding author", "journal": "Clinical Research", "indexing": ["Scopus"]},
             "conference": {
-                "presentation_type": "Oral presentation", "conference": "Health Research Summit",
+                "presentation_type": "Oral presentation", "mode": "Offline", "conference": "Health Research Summit",
                 "organiser": "SRHU", "level": "National",
             },
-            "patent": {"inventors": "Meera Joshi", "office": "India (IPO)", "application_number": "202611012345"},
+            "patent": {"ipr_type": "Patent", "inventors": "Meera Joshi", "office": "India (IPO)", "application_number": "202611012345"},
             "book": {"book_type": "Authored book", "authors": "Meera Joshi", "publisher": "SRHU Press"},
             "other": {"kind": "Fellowship", "awarded_by": "Research Council"},
         }
@@ -395,9 +404,9 @@ class ResearchTest(ResearchFixture, unittest.TestCase):
         from app.services.research_categories import CATEGORIES, clean_details, indexing_text
 
         journal = CATEGORIES["journal"]
-        base = {"authors": "M", "author_position": "First author", "journal": "J"}
+        base = {"authors": "M", "author_position": "First author / Corresponding author", "journal": "J"}
         cleaned, missing = clean_details(journal, {**base, "indexing": ["Scopus", "Other"]}, "published")
-        self.assertIn("Other indexing platform", missing)
+        self.assertIn("Other indexing (type the name)", missing)
         cleaned, missing = clean_details(
             journal, {**base, "indexing": ["Scopus", "Other"], "indexing_other": "DOAJ"}, "published")
         self.assertEqual(missing, [])
@@ -445,13 +454,13 @@ class ResearchTest(ResearchFixture, unittest.TestCase):
         recorded = self.call("POST", f"/research/records/{self.create()['id']}/submit", "manager")["record"]
         self.assertTrue(recorded["recorded_by_manager"])
 
-    def test_with_evidence_required_the_last_file_cannot_be_removed(self):
+    def test_the_last_evidence_file_can_be_removed_even_with_the_old_policy_on(self):
+        # Research takes no uploads now, so the Super Admin's evidence policy
+        # no longer holds a record's last file in place.
         record = self.accepted()
         evidence_id = record["evidence"][0]["id"]
         with patch("app.routers.research.get_upload_limits", lambda: {**LIMITS, "research_evidence_required": True}):
-            self.call("DELETE", f"/research/records/{record['id']}/evidence/{evidence_id}", "teacher", 409)
-        # Optional: removing it is fine.
-        self.call("DELETE", f"/research/records/{record['id']}/evidence/{evidence_id}", "teacher")
+            self.call("DELETE", f"/research/records/{record['id']}/evidence/{evidence_id}", "teacher")
 
     def test_manager_can_record_without_evidence_even_when_teacher_policy_requires_it(self):
         with patch(
@@ -473,7 +482,7 @@ class ResearchTest(ResearchFixture, unittest.TestCase):
             self.assertEqual(bulk["recorded"], [queued["id"]])
             self.assertEqual(bulk["skipped"], [])
 
-    def test_submission_needs_complete_details_and_evidence(self):
+    def test_submission_needs_complete_details_but_no_evidence(self):
         self.patches.append(patch("app.routers.research.get_upload_limits", lambda: {**LIMITS, "research_evidence_required": True}))
         self.patches[-1].start()
         record = self.create("teacher", record_date=None)
@@ -481,14 +490,79 @@ class ResearchTest(ResearchFixture, unittest.TestCase):
         self.assertIn("Filing date", message)
 
         self.call("PATCH", f"/research/records/{record['id']}", "teacher", json={"record_date": "2026-03-10"})
-        message = self.call("POST", f"/research/records/{record['id']}/submit", "teacher", 400)["detail"]
-        self.assertIn("evidence", message)
-
-        self.attach(record["id"], "teacher")
+        # No evidence attached, and none asked for.
         done = self.call("POST", f"/research/records/{record['id']}/submit", "teacher")["record"]
         self.assertEqual(done["verification_status"], "submitted")
         self.assertEqual(len(self.notes_for(DEAN_ID, "research_submitted")), 1)
         self.assertEqual(len(self.notes_for(SECOND_DEAN_ID, "research_submitted")), 1)
+
+    def test_journals_are_published_and_conferences_presented_only(self):
+        journal = {
+            "category": "journal", "title": "A journal paper on rural wound care", "record_date": "2026-03-10",
+            "faculty_id": str(TEACHER_ID),
+            "details": {"author_position": "Corresponding author", "journal": "Wound Care", "indexing": ["SCIE"]},
+        }
+        self.call("POST", "/research/records", "manager", 400, json={**journal, "outcome_status": "accepted"})
+        made = self.call("POST", "/research/records", "manager", 201, json=journal)["record"]
+        self.assertEqual(made["outcome_status"], "published")
+        # UGC-CARE is no longer offered for new records.
+        self.call("POST", "/research/records", "manager", 400,
+                  json={**journal, "details": {**journal["details"], "indexing": ["UGC-CARE"]}})
+        conference = {
+            "category": "conference", "title": "A talk on mountain health systems", "record_date": "2026-03-10",
+            "faculty_id": str(TEACHER_ID),
+            "details": {"presentation_type": "Other", "mode": "Online", "conference": "Summit",
+                        "organiser": "SRHU", "level": "National"},
+        }
+        draft = self.call("POST", "/research/records", "manager", 201, json=conference)["record"]
+        self.assertEqual(draft["outcome_status"], "presented")
+        message = self.call("POST", f"/research/records/{draft['id']}/submit", "manager", 400)["detail"]
+        self.assertIn("Other type (type it in)", message)
+
+    def test_an_older_record_keeps_its_retired_choices_when_edited(self):
+        record = self.create(
+            category="journal", title="An older journal paper on wound dressings", outcome_status="published",
+            details={"author_position": "Corresponding author", "journal": "Wound Care", "indexing": ["Scopus"]},
+        )
+        # As saved before this change: a status and choices since retired.
+        legacy = {"author_position": "First author", "journal": "Wound Care", "indexing": ["Scopus", "UGC-CARE"]}
+        self.records.update_one({"_id": ObjectId(record["id"])},
+                                {"$set": {"outcome_status": "accepted", "details": legacy}})
+        saved = self.call("PATCH", f"/research/records/{record['id']}", "manager", json={
+            "title": "An older journal paper on wound dressings, revised",
+            "outcome_status": "accepted",
+            "details": {**legacy, "journal": "Wound Care Journal"},
+        })["record"]
+        self.assertEqual(saved["outcome_status"], "accepted")
+        self.assertEqual(saved["details"]["author_position"], "First author")
+        self.assertEqual(saved["details"]["indexing"], ["Scopus", "UGC-CARE"])
+        # A retired choice the record never had is still refused.
+        self.call("PATCH", f"/research/records/{record['id']}", "manager", 400,
+                  json={"details": {**legacy, "author_position": "Last author"}})
+
+    def test_a_funded_project_names_its_agency_only_when_extramural(self):
+        project = {
+            "category": "funded_project", "title": "Water quality in hill villages", "record_date": "2025-07-01",
+            "outcome_status": "ongoing", "faculty_id": str(TEACHER_ID),
+            "details": {"funding_type": "Extramural", "role": "Principal Investigator", "amount": "12,00,000",
+                        "funding_agency": "SERB"},
+        }
+        made = self.call("POST", "/research/records", "manager", 201, json=project)["record"]
+        self.assertEqual(made["details"]["amount"], 1200000)
+        self.assertEqual(made["details"]["funding_agency"], "SERB")
+        inside = self.call("POST", "/research/records", "manager", 201, json={
+            **project, "title": "Campus solar audit",
+            "details": {**project["details"], "funding_type": "Intramural"},
+        })["record"]
+        self.assertNotIn("funding_agency", inside["details"])
+        self.call("POST", f"/research/records/{inside['id']}/submit", "manager")
+        abroad = self.call("POST", "/research/records", "manager", 201, json={
+            **project, "title": "Glacier melt survey", "outcome_status": "completed",
+            "details": {"funding_type": "Extramural", "role": "Co-Investigator", "amount": 500000},
+        })["record"]
+        message = self.call("POST", f"/research/records/{abroad['id']}/submit", "manager", 400)["detail"]
+        self.assertIn("Funding agency", message)
+        self.assertIn("End date", message)
 
     def test_a_granted_patent_needs_its_grant_details(self):
         record = self.create(outcome_status="granted")
@@ -794,13 +868,13 @@ class ResearchTest(ResearchFixture, unittest.TestCase):
     def test_event_manager_deletion_removes_each_active_research_category(self):
         cases = (
             ("journal", "published", "Full paper", {
-                "author_position": "First author", "journal": "Journal of Testing", "indexing": ["Scopus"],
+                "author_position": "First author / Corresponding author", "journal": "Journal of Testing", "indexing": ["Scopus"],
             }),
             ("conference", "presented", "Certificate", {
-                "presentation_type": "Oral presentation", "conference": "Test Conference",
+                "presentation_type": "Oral presentation", "mode": "Offline", "conference": "Test Conference",
                 "organiser": "SRHU", "level": "National",
             }),
-            ("patent", "filed", "Filing receipt", {"inventors": "Meera Joshi", "office": "India (IPO)", "application_number": "2026000123"}),
+            ("patent", "filed", "Filing receipt", {"ipr_type": "Patent", "inventors": "Meera Joshi", "office": "India (IPO)", "application_number": "2026000123"}),
             ("book", "published", "Cover page", {
                 "book_type": "Authored book", "authors": "Meera Joshi", "publisher": "Test Press",
             }),

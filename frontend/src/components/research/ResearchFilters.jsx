@@ -30,7 +30,7 @@ export default function ResearchFilters({
   }, [draft, query.q, setFilter]);
 
   const active = Boolean(
-    query.q || query.category || query.year || query.from || query.to || query.status !== defaultStatus,
+    query.q || query.category || query.year || query.from || query.to || query.faculty || query.status !== defaultStatus,
   );
 
   return (

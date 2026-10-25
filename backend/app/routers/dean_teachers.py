@@ -450,6 +450,52 @@ def list_teachers(
     }
 
 
+@router.get("/export.xlsx")
+def export_teachers(
+    q: str | None = Query(default=None, max_length=200),
+    account_status: str = Query(default="all", alias="status", max_length=20),
+    verified: str = Query(default="all", max_length=20),
+    source: str = Query(default="all", max_length=20),
+    onboarding: str = Query(default="all", max_length=20),
+    sort: str = Query(default="newest", max_length=20),
+):
+    """The faculty list under the same filters, as one Excel sheet."""
+    from app.services.excel_export import build_workbook, stamped, xlsx_response
+
+    now = utc_now()
+    base, search_clause, onboarding_clause, status_queries = _teacher_filters(q, verified, source, onboarding, now)
+    query = _combine({**base, **status_queries[_status_key(account_status)]}, search_clause, onboarding_clause)
+    people = list(users.find(query, {field: 0 for field in USER_PRIVATE_FIELDS}).sort(SORTS.get(sort, SORTS["newest"])))
+    ids = [str(person["_id"]) for person in people]
+    event_counts = _event_counts(ids)
+    research_counts = _research_counts(ids)
+    onboarding_label = {"joined": "Joined", "invited": "Invited", "expired": "Invite expired", "not_invited": "Not invited"}
+    rows = [
+        [
+            person.get("name"),
+            person.get("email"),
+            person.get("designation"),
+            person.get("department"),
+            person.get("phone") or person.get("mobile"),
+            "Active" if person.get("is_active", True) else "Deactivated",
+            onboarding_label.get(onboarding_status(person, now), ""),
+            event_counts.get(str(person["_id"]), 0),
+            research_counts.get(str(person["_id"]), 0),
+            person.get("last_sign_in_at"),
+            person.get("created_at"),
+        ]
+        for person in people
+    ]
+    content = build_workbook(
+        "Teachers",
+        ["Name", "Email", "Designation", "Department", "Phone", "Account", "Onboarding",
+         "Events", "Research records", "Last sign-in", "Added on"],
+        rows,
+        note=f"{len(rows)} teacher{'s' if len(rows) != 1 else ''} · as filtered on the Teachers page",
+    )
+    return xlsx_response(content, stamped("teachers"))
+
+
 def _parse_iso(value: Any) -> datetime | None:
     """serialize() turned datetimes into ISO strings; read one back."""
     if value is None or isinstance(value, datetime):

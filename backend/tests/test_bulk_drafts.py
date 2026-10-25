@@ -144,11 +144,12 @@ class BulkDraftTests(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["recorded_count"], 1, body)
         stored = managed_events.find_one({"_id": ObjectId(ready)})
-        self.assertEqual(stored["status"], "recorded")
-        self.assertIsNotNone(stored.get("recorded_at"))
+        # Event Manager events now go to the Dean for approval, like a teacher's.
+        self.assertEqual(stored["status"], "pending")
+        self.assertIsNotNone(stored.get("submitted_at"))
         by_id = {r["event_id"]: r for r in body["results"]}
         self.assertIn("photo", by_id[bare]["reason"])
-        self.assertEqual(by_id[done]["reason"], "Already recorded.")
+        self.assertEqual(by_id[done]["reason"], "Already submitted.")
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ import { isAbortError } from "../../services/api";
 import { downloadResearchCv, exportNaac, researchAnalytics } from "../../services/research";
 
 // One fixed slot per category, never re-ordered or cycled (index.css).
-const ORDER = ["journal", "conference", "patent", "book", "other"];
+const ORDER = ["journal", "conference", "patent", "book", "funded_project", "other"];
 const SERIES = {
   journal: "var(--series-1)",
   conference: "var(--series-2)",

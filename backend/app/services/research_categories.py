@@ -54,11 +54,13 @@ class Category:
     fields: tuple[Field, ...]
     evidence_tags: tuple[str, ...]
     title_label: str = "Title"
+    # What the form calls the person the record belongs to.
+    person_label: str = "Faculty name"
     # Outcomes that end the line without success (a refused patent).
     closed_outcomes: tuple[str, ...] = field(default=())
 
 
-INDEXING = ("Scopus", "Web of Science", "UGC-CARE", "PubMed", "Google Scholar", "Other")
+INDEXING = ("SCI", "SCIE", "Scopus", "Web of Science", "PubMed", "Google Scholar", "Other")
 LEVELS = ("International", "National", "State", "University")
 
 CATEGORIES: dict[str, Category] = {
@@ -69,19 +71,22 @@ CATEGORIES: dict[str, Category] = {
         description="Research papers and articles published in journals.",
         date_label="Publication date",
         title_label="Paper title",
-        outcomes=(("accepted", "Accepted"), ("in_press", "In press"), ("published", "Published")),
+        person_label="Author name",
+        # Published papers only. Older records may still hold accepted or
+        # in_press; those are shown as stored.
+        outcomes=(("published", "Published"),),
         fields=(
             # Kept short on purpose: no author list, publisher, volume, issue,
             # pages, ISSN or impact factor. The DOI stays, optional; the form
             # draws it with its "Fill from DOI" button rather than as a field
             # of its own.
-            Field("author_position", "Faculty member's authorship", "select", required=True,
-                  options=("First author", "Corresponding author", "Co-author")),
-            Field("journal", "Journal", required=True),
+            Field("author_position", "Authorship", "select", required=True,
+                  options=("First author / Corresponding author", "Corresponding author", "Co-author")),
+            Field("journal", "Name of journal", required=True),
             Field("doi", "DOI", "doi", placeholder="e.g. 10.1016/j.example.2026.01.001"),
             Field("indexing", "Indexed in", "multiselect", required=True, options=INDEXING,
                   help="Choose every database that indexes the journal."),
-            Field("indexing_other", "Other indexing platform", required=True, shown_if=("indexing", "Other"),
+            Field("indexing_other", "Other indexing (type the name)", required=True, shown_if=("indexing", "Other"),
                   placeholder="e.g. DOAJ, EBSCO, Index Copernicus"),
             Field("quartile", "Quartile", "select", options=("Q1", "Q2", "Q3", "Q4")),
         ),
@@ -94,15 +99,17 @@ CATEGORIES: dict[str, Category] = {
         description="Papers, posters, keynotes and invited talks at conferences.",
         date_label="Presentation date",
         title_label="Paper / talk title",
-        outcomes=(
-            ("accepted", "Accepted"),
-            ("presented", "Presented"),
-            ("published", "Published in proceedings"),
-        ),
+        person_label="Author name",
+        # Presented papers only; older records may still hold accepted or
+        # published, shown as stored.
+        outcomes=(("presented", "Presented"),),
         fields=(
             Field("presentation_type", "Type", "select", required=True,
-                  options=("Oral presentation", "Poster", "Keynote", "Invited talk", "Session chair")),
-            Field("conference", "Conference", required=True),
+                  options=("Oral presentation", "Poster", "Keynote", "Invited talk", "Other")),
+            Field("presentation_type_other", "Other type (type it in)", required=True,
+                  shown_if=("presentation_type", "Other")),
+            Field("mode", "Mode", "select", required=True, options=("Offline", "Online", "Hybrid")),
+            Field("conference", "Name of conference", required=True),
             Field("organiser", "Organised by", required=True),
             Field("level", "Level", "select", required=True, options=LEVELS),
             Field("end_date", "Last day", "date"),
@@ -112,11 +119,12 @@ CATEGORIES: dict[str, Category] = {
     ),
     "patent": Category(
         key="patent",
-        label="Patent",
+        label="Patent / IPR",
         short="Patent",
-        description="Patents filed, published or granted, in India or abroad.",
+        description="Patents, copyrights, trademarks, designs and other IPR, filed, published or granted.",
         date_label="Filing date",
-        title_label="Title of the invention",
+        title_label="Title",
+        person_label="Name of inventor",
         outcomes=(
             ("filed", "Filed"),
             ("published", "Published"),
@@ -126,7 +134,10 @@ CATEGORIES: dict[str, Category] = {
         ),
         closed_outcomes=("refused", "abandoned"),
         fields=(
-            Field("inventors", "Inventors", "textarea", required=True),
+            Field("ipr_type", "IPR type", "select", required=True,
+                  options=("Patent", "Copyright", "Trademark", "Industrial design", "Geographical indication", "Other")),
+            Field("ipr_type_other", "Other IPR type (type it in)", required=True, shown_if=("ipr_type", "Other")),
+            Field("inventors", "All inventors", "textarea", required=True),
             Field("office", "Patent office", "select", required=True,
                   options=("India (IPO)", "USA (USPTO)", "PCT / WIPO", "Other")),
             Field("application_number", "Application number", required=True),
@@ -148,6 +159,7 @@ CATEGORIES: dict[str, Category] = {
         short="Book",
         description="Authored and edited books, and chapters in books.",
         date_label="Publication date",
+        person_label="Author name",
         outcomes=(("accepted", "Accepted"), ("published", "Published")),
         fields=(
             Field("book_type", "Type", "select", required=True,
@@ -158,6 +170,25 @@ CATEGORIES: dict[str, Category] = {
             Field("publisher", "Publisher", required=True),
         ),
         evidence_tags=("Cover page", "ISBN page", "Chapter first page", "Acceptance letter", "Other"),
+    ),
+    "funded_project": Category(
+        key="funded_project",
+        label="Funded project",
+        short="Funded project",
+        description="Intramural and extramural research projects and grants.",
+        date_label="Start date",
+        title_label="Project title",
+        outcomes=(("ongoing", "Ongoing"), ("completed", "Completed")),
+        fields=(
+            Field("funding_type", "Funding", "select", required=True, options=("Intramural", "Extramural")),
+            Field("role", "Faculty member's role", "select", required=True,
+                  options=("Principal Investigator", "Co-Principal Investigator", "Co-Investigator")),
+            Field("funding_agency", "Funding agency", required=True, shown_if=("funding_type", "Extramural"),
+                  placeholder="e.g. DST, SERB, ICMR, DBT"),
+            Field("amount", "Amount sanctioned (₹)", "number", required=True),
+            Field("end_date", "End date", "date", required_from="completed"),
+        ),
+        evidence_tags=("Sanction letter", "Utilisation certificate", "Completion report", "Other"),
     ),
     "other": Category(
         key="other",
@@ -175,10 +206,12 @@ CATEGORIES: dict[str, Category] = {
                       "Editorial board / reviewer",
                       "Consultancy",
                       "Copyright / design registration",
-                      "Invited talk",
+                      "Session chair",
+                      "Invited talk / Guest lecture",
                       "MoU / collaboration",
                       "Other",
                   )),
+            Field("kind_other", "Other kind (type it in)", required=True, shown_if=("kind", "Other")),
             Field("awarded_by", "Awarded by / organisation", required=True),
             Field("level", "Level", "select", options=LEVELS),
             Field("description", "Details", "textarea"),
@@ -280,10 +313,16 @@ def is_required(category: Category, item: Field, outcome: str) -> bool:
     return bool(item.required_from) and _reached(category, outcome, item.required_from)
 
 
-def _clean_value(item: Field, raw: Any) -> Any:
-    """The tidied value, None for empty, or DetailsError."""
+def _clean_value(item: Field, raw: Any, kept: Any = None) -> Any:
+    """The tidied value, None for empty, or DetailsError.
+
+    ``kept`` is what the record already holds for the field: a choice that
+    has since been retired (UGC-CARE, "First author") stays acceptable on the
+    record that has it, so editing an older record is not refused.
+    """
     if raw is None:
         return None
+    kept_choices = kept if isinstance(kept, list) else [kept] if kept else []
 
     if item.type == "multiselect":
         values = raw if isinstance(raw, (list, tuple)) else [raw]
@@ -292,7 +331,7 @@ def _clean_value(item: Field, raw: Any) -> Any:
             text = str(value or "").strip()
             if not text:
                 continue
-            if text not in item.options:
+            if text not in item.options and text not in kept_choices:
                 raise DetailsError(f"{item.label}: “{text}” is not one of the choices.")
             if text not in picked:
                 picked.append(text)
@@ -320,7 +359,7 @@ def _clean_value(item: Field, raw: Any) -> Any:
         return None
 
     if item.type == "select":
-        if text not in item.options:
+        if text not in item.options and text not in kept_choices:
             raise DetailsError(f"{item.label}: “{text}” is not one of the choices.")
         return text
     if item.type == "date":
@@ -343,11 +382,14 @@ def _clean_value(item: Field, raw: Any) -> Any:
     return text
 
 
-def clean_details(category: Category, details: dict | None, outcome: str) -> tuple[dict, list[str]]:
+def clean_details(
+    category: Category, details: dict | None, outcome: str, kept: dict | None = None
+) -> tuple[dict, list[str]]:
     """(cleaned details, labels of required fields still empty).
 
     Keys the category does not define are dropped, so a form can never store
     fields nobody will see. Raises DetailsError for a value that is malformed.
+    ``kept``: the details the record already holds (see _clean_value).
     """
     if details is not None and not isinstance(details, dict):
         raise DetailsError("Details must be an object.")
@@ -359,7 +401,7 @@ def clean_details(category: Category, details: dict | None, outcome: str) -> tup
         # therefore already cleaned; when it does not apply it is dropped.
         if not is_shown(item, cleaned):
             continue
-        value = _clean_value(item, source.get(item.key))
+        value = _clean_value(item, source.get(item.key), (kept or {}).get(item.key))
         if value is not None:
             cleaned[item.key] = value
         elif is_required(category, item, outcome):

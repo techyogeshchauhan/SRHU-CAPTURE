@@ -160,6 +160,48 @@ def _scope(user: dict) -> dict:
     return {"faculty_id": user["id"]}
 
 
+def _read_scope(user: dict) -> dict:
+    """What an author may read: as _scope, and for a teacher also the work
+    they are a co-author of -- which they see, but cannot change."""
+    if user.get("role") == "event_manager":
+        return _scope(user)
+    return {"$and": [authored_by(user["id"])]}
+
+
+def authored_by(faculty_id: str) -> dict:
+    """Records a faculty member is an author of: their own, or as a co-author."""
+    return {"$or": [{"faculty_id": faculty_id}, {"co_faculty_ids": faculty_id}]}
+
+
+def _and(query: dict, clause: dict) -> None:
+    """Add a clause to a query that may already hold an $or of its own."""
+    query["$and"] = [*query.get("$and", []), clause]
+
+
+def authors_of(record: dict) -> list[str]:
+    """The record's faculty member first, then its co-authors."""
+    first = record.get("faculty_id")
+    rest = [fid for fid in record.get("co_faculty_ids") or [] if fid and fid != first]
+    return [first, *rest] if first else rest
+
+
+def _co_authors_or_400(ids: list[str] | None, faculty_id: str) -> list[str]:
+    """The co-authors as stored: existing teachers, each once, never the
+    faculty member the record belongs to."""
+    wanted = [fid.strip() for fid in ids or [] if fid and fid.strip() and fid.strip() != faculty_id]
+    wanted = list(dict.fromkeys(wanted))
+    object_ids = [to_object_id(fid) for fid in wanted]
+    if any(oid is None for oid in object_ids):
+        raise _bad_request("A co-author could not be found. Choose them again.")
+    found = {
+        str(person["_id"])
+        for person in users.find({"_id": {"$in": object_ids}, "role": "teacher"}, {"_id": 1})
+    } if object_ids else set()
+    if len(found) != len(wanted):
+        raise _bad_request("A co-author could not be found. Choose them again.")
+    return wanted
+
+
 def _find_for_author(record_id: str, user: dict) -> dict:
     object_id = to_object_id(record_id)
     if object_id is None:
@@ -206,9 +248,9 @@ def _outcome_or_400(category, outcome: str | None) -> str:
     return value
 
 
-def _clean_or_400(category, details: dict | None, outcome: str) -> tuple[dict, list[str]]:
+def _clean_or_400(category, details: dict | None, outcome: str, kept: dict | None = None) -> tuple[dict, list[str]]:
     try:
-        return clean_details(category, details, outcome)
+        return clean_details(category, details, outcome, kept)
     except DetailsError as error:
         raise _bad_request(str(error)) from None
 
@@ -225,7 +267,8 @@ def _missing_for_submission(record: dict) -> list[str]:
         missing.append(category.date_label if category else "Date")
     if category is not None:
         try:
-            _, absent = clean_details(category, record.get("details"), record.get("outcome_status") or "")
+            details = record.get("details")
+            _, absent = clean_details(category, details, record.get("outcome_status") or "", details)
         except DetailsError:
             absent = []
         missing.extend(absent)
@@ -238,7 +281,7 @@ def _attach_people(items: list[dict]) -> None:
     No department: the platform serves one school (SST, see
     settings.default_host_department), so every researcher is in it.
     """
-    ids = {item.get("faculty_id") for item in items if item.get("faculty_id")}
+    ids = {fid for item in items for fid in authors_of(item)}
     object_ids = [oid for oid in (to_object_id(value) for value in ids) if oid is not None]
     people: dict[str, dict] = {}
     if object_ids:
@@ -252,11 +295,12 @@ def _attach_people(items: list[dict]) -> None:
                 "email": person.get("email"),
                 "designation": person.get("designation"),
             }
+    def card(faculty_id):
+        return people.get(str(faculty_id)) or {"id": faculty_id, "name": "Unknown faculty member"}
+
     for item in items:
-        item["faculty"] = people.get(str(item.get("faculty_id"))) or {
-            "id": item.get("faculty_id"),
-            "name": "Unknown faculty member",
-        }
+        item["faculty"] = card(item.get("faculty_id"))
+        item["co_faculty"] = [card(fid) for fid in authors_of(item)[1:]]
 
 
 def _present_evidence(request: Request, entry: dict) -> dict:
@@ -388,6 +432,9 @@ def _permissions(item: dict, viewer: dict) -> dict:
             # nothing for the Dean to withdraw.
             "can_unverify": not own and state == "verified" and not recorded and not handled_by_manager(item),
         }
+    if viewer.get("role") == "teacher" and item.get("faculty_id") != viewer.get("id"):
+        # A co-author sees the record in their portfolio; it is not theirs to change.
+        return {"can_edit": False, "can_submit": False, "can_delete": False, "can_flag": False, "co_author": True}
     return {
         "can_edit": get_category(item.get("category")) is not None,
         "can_submit": get_category(item.get("category")) is not None and state in RESEARCH_SUBMITTABLE_STATUSES,
@@ -563,6 +610,7 @@ def _search_clause(q: str | None, *, include_people: bool) -> dict | None:
         ]
         if ids:
             clauses.append({"faculty_id": {"$in": ids}})
+            clauses.append({"co_faculty_ids": {"$in": ids}})
     return {"$or": clauses}
 
 
@@ -591,7 +639,8 @@ def _apply_filters(query: dict, *, category: str | None, academic_year: str | No
     if academic_year:
         query["academic_year"] = academic_year.strip()
     if faculty_id:
-        query["faculty_id"] = faculty_id.strip()
+        # One faculty member's research: what is theirs and what they co-authored.
+        _and(query, authored_by(faculty_id.strip()))
 
 
 def _page(cursor, skip: int, limit: int):
@@ -849,7 +898,7 @@ def _list_query(user: dict, status_filter, category, academic_year, faculty_id, 
     """(the filters without the status tab, the full query) for an author's
     list -- one definition, so "select all matching" picks exactly what the
     list shows."""
-    base = _scope(user)
+    base = _read_scope(user)
     _apply_filters(
         base,
         category=category,
@@ -899,7 +948,7 @@ def list_records(
         "skip": skip,
         "limit": limit,
         "counts": counts,
-        "academic_years": _academic_years(_scope(user)),
+        "academic_years": _academic_years(_read_scope(user)),
     }
 
 
@@ -984,9 +1033,6 @@ def bulk_record_records(
     user = _manager(authorization)
     recorded: list[str] = []
     skipped: list[dict] = []
-    # Event Manager uploads are optional even when the teacher-side evidence
-    # policy is enabled in Super Admin settings.
-    evidence_required = False
     for record_id in dict.fromkeys(payload.ids):
         object_id = to_object_id(record_id)
         record = research_records.find_one({"_id": object_id, **_scope(user)}) if object_id else None
@@ -1006,13 +1052,6 @@ def bulk_record_records(
                 "id": record_id,
                 "title": record.get("title"),
                 "reason": "Fill in before recording: " + ", ".join(missing) + ".",
-            })
-            continue
-        if not record.get("evidence") and evidence_required:
-            skipped.append({
-                "id": record_id,
-                "title": record.get("title"),
-                "reason": "Attach at least one piece of evidence before recording.",
             })
             continue
         try:
@@ -1056,6 +1095,9 @@ def create_record(
             )
         faculty_id = user["id"]
         faculty = None
+    if payload.co_faculty_ids and user.get("role") != "event_manager":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the Event Manager names co-authors.")
+    co_faculty_ids = _co_authors_or_400(payload.co_faculty_ids, faculty_id)
 
     outcome = _outcome_or_400(category, payload.outcome_status)
     details, _ = _clean_or_400(category, payload.details, outcome)
@@ -1068,9 +1110,9 @@ def create_record(
         record_date=payload.record_date,
         outcome_status=outcome,
         details=details,
-        abstract=payload.abstract,
         link=payload.link,
     )
+    document["co_faculty_ids"] = co_faculty_ids
     document["identifiers"] = identifiers_of(category.key, document["title"], details)
     document["history"] = [new_history_entry(action="created", status="draft", actor=user)]
     result = research_records.insert_one(document)
@@ -1084,6 +1126,7 @@ def create_record(
             f'{_who(user)} added the {category.short.lower()} record "{payload.title}" to your research portfolio.',
             document,
         )
+    _notify_co_authors(co_faculty_ids, user, category, payload.title, document)
 
     return {
         "success": True,
@@ -1092,10 +1135,25 @@ def create_record(
     }
 
 
+def _notify_co_authors(co_faculty_ids: list[str], user: dict, category, title: str, document: dict) -> None:
+    for co_author in co_faculty_ids:
+        if co_author != user["id"]:
+            _notify(
+                co_author,
+                "research_added",
+                "Research added to your portfolio",
+                f'{_who(user)} named you a co-author of the {category.short.lower()} record "{title}".',
+                document,
+            )
+
+
 @router.get("/research/records/{record_id}")
 def get_record(record_id: str, request: Request, authorization: str | None = Header(default=None)):
     user = _author(authorization)
-    record = _find_for_author(record_id, user)
+    object_id = to_object_id(record_id)
+    record = research_records.find_one({"_id": object_id, **_read_scope(user)}) if object_id else None
+    if not record:
+        raise _not_found()
     return {"success": True, "record": _present_one(request, record, user)}
 
 
@@ -1139,17 +1197,21 @@ def update_record(
     if "record_date" in fields:
         changes["record_date"] = fields["record_date"]
         changes["academic_year"] = academic_year_of(fields["record_date"])
-    if "abstract" in fields:
-        changes["abstract"] = fields["abstract"]
     if "link" in fields:
         changes["link"] = fields["link"]
+    if fields.get("co_faculty_ids") is not None:
+        if user.get("role") != "event_manager":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the Event Manager names co-authors.")
+        changes["co_faculty_ids"] = _co_authors_or_400(fields["co_faculty_ids"], record.get("faculty_id"))
 
     outcome = record.get("outcome_status")
-    if "outcome_status" in fields:
+    # An older record's retired status (a journal paper still "accepted")
+    # may be sent back unchanged.
+    if "outcome_status" in fields and fields["outcome_status"] != outcome:
         outcome = _outcome_or_400(category, fields["outcome_status"])
         changes["outcome_status"] = outcome
     if "details" in fields:
-        changes["details"], _ = _clean_or_400(category, fields["details"], outcome)
+        changes["details"], _ = _clean_or_400(category, fields["details"], outcome, record.get("details"))
 
     if "title" in changes or "details" in changes:
         changes["identifiers"] = identifiers_of(
@@ -1158,7 +1220,10 @@ def update_record(
 
     # Only what actually differs counts: saving an untouched form must not
     # send a verified record back to the Dean.
-    changes = {key: value for key, value in changes.items() if record.get(key) != value}
+    changes = {
+        key: value for key, value in changes.items()
+        if record.get(key, [] if key == "co_faculty_ids" else None) != value
+    }
     if not changes:
         return {"success": True, "message": "Nothing changed", "record": _present_one(request, record, user)}
 
@@ -1187,6 +1252,9 @@ def update_record(
             title="Verified research updated",
             message=f'{_who(user)} changed the verified record "{changes.get("title", record.get("title"))}"; it needs verifying again.',
         )
+    if "co_faculty_ids" in changes:
+        added = [fid for fid in changes["co_faculty_ids"] if fid not in (record.get("co_faculty_ids") or [])]
+        _notify_co_authors(added, user, category, changes.get("title", record.get("title")), record)
 
     return {
         "success": True,
@@ -1231,12 +1299,7 @@ def submit_record(record_id: str, request: Request, authorization: str | None = 
     missing = _missing_for_submission(record)
     if missing:
         raise _bad_request("Fill in before submitting: " + ", ".join(missing) + ".")
-    if (
-        user.get("role") != "event_manager"
-        and not record.get("evidence")
-        and evidence_limits()["evidence_required"]
-    ):
-        raise _bad_request("Attach at least one piece of evidence before submitting.")
+    # No evidence is asked for: research forms no longer take uploads.
 
     if user.get("role") == "event_manager":
         return _record_directly(request, record, current, user)
@@ -1594,15 +1657,6 @@ def remove_evidence(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evidence file not found")
 
     state = record.get("verification_status")
-    if (
-        user.get("role") != "event_manager"
-        and state in ("submitted", "verified")
-        and len(evidence) == 1
-        and evidence_limits()["evidence_required"]
-    ):
-        raise _conflict(
-            "A record with the Dean needs at least one piece of evidence. Attach the replacement first, then remove this one."
-        )
 
     changes: dict = {"updated_at": utc_now()}
     action = "evidence_removed"
@@ -1777,6 +1831,7 @@ def dean_research_overview(
     q: str | None = Query(default=None, max_length=200),
     start_date: str | None = Query(default=None, max_length=10),
     end_date: str | None = Query(default=None, max_length=10),
+    faculty_id: str | None = Query(default=None, max_length=40),
 ):
     """The Dean's figures for the research the Event Manager has submitted,
     under the page's filters: how many records, from how many faculty, the
@@ -1784,7 +1839,7 @@ def dean_research_overview(
     per category (ignoring the category filter, so every chip keeps its count)."""
     _dean(authorization)
     base: dict = dict(FROM_MANAGER)
-    _apply_filters(base, category=None, academic_year=academic_year, faculty_id=None)
+    _apply_filters(base, category=None, academic_year=academic_year, faculty_id=faculty_id)
     apply_date_range(base, start_date, end_date)
     search = _search_clause(q, include_people=True)
     if search:
@@ -1793,7 +1848,7 @@ def dean_research_overview(
 
     by_category: dict[str, int] = {}
     chosen: list[dict] = []
-    for row in research_records.find(base, {"category": 1, "outcome_status": 1, "faculty_id": 1}):
+    for row in research_records.find(base, {"category": 1, "outcome_status": 1, "faculty_id": 1, "co_faculty_ids": 1}):
         key = row.get("category") or "other"
         by_category[key] = by_category.get(key, 0) + 1
         if not wanted or key == wanted:
@@ -1808,7 +1863,7 @@ def dean_research_overview(
     return {
         "success": True,
         "total": len(chosen),
-        "faculty_count": len({row.get("faculty_id") for row in chosen if row.get("faculty_id")}),
+        "faculty_count": len({fid for row in chosen for fid in authors_of(row)}),
         "journal_papers": sum(1 for row in chosen if row.get("category") == "journal"),
         "patents": patents,
         "by_category": by_category,

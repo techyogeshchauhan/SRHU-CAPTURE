@@ -30,23 +30,25 @@ export const shadeAt = (rank, accentRgb) =>
   `rgb(${accentRgb} / ${alphaAt(rank)})`;
 
 /**
- * Count events per program type, largest share first, each with its shade.
- * Types are matched case-insensitively so "Workshop" and "workshop" are one
- * row rather than two.
+ * Events per program type, largest share first, each with its shade, from the
+ * counts the server makes ({"Workshop": 4, "workshop": 1, "Seminar": 2}) --
+ * so the dashboard need not download every event to draw it. Types are
+ * matched case-insensitively so "Workshop" and "workshop" are one row rather
+ * than two.
  */
-export function programShare(events, accentRgb) {
-  const list = Array.isArray(events) ? events : [];
+export function programShareFromCounts(typeCounts, accentRgb) {
   const counts = new Map();
 
-  for (const event of list) {
-    const raw = String(event?.event_type ?? "").trim();
-    if (!raw) continue;
+  for (const [type, value] of Object.entries(typeCounts || {})) {
+    const raw = String(type ?? "").trim();
+    const amount = Number(value) || 0;
+    if (!raw || amount <= 0) continue;
 
     const key = raw.toLowerCase();
     const existing = counts.get(key);
 
-    if (existing) existing.value += 1;
-    else counts.set(key, { name: raw, value: 1 });
+    if (existing) existing.value += amount;
+    else counts.set(key, { name: raw, value: amount });
   }
 
   return [...counts.values()]

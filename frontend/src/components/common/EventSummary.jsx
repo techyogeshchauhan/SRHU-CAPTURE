@@ -104,7 +104,7 @@ function EventSummary({
             {photos.map((photo) => (
               <li key={photo.id} className="overflow-hidden rounded-lg">
                 <img
-                  src={photo.media_url}
+                  src={photo.preview_url || photo.media_url}
                   alt={photo.file_name}
                   loading="lazy"
                   className="h-16 w-full object-cover"

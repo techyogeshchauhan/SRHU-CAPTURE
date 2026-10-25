@@ -237,13 +237,16 @@ class GenerateWithoutSocialLinkTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Completed", response.json()["detail"])
 
-    def test_generated_body_says_not_provided(self) -> None:
+    def test_generated_body_leaves_out_a_missing_social_link(self) -> None:
         from app.routers.reports import build_report_content
 
         body = build_report_content(
             approved_event(social_network_url=None), {"name": "T", "email": "t@x"}, [], []
         )
-        self.assertIn("Not provided", body)
+        # Empty fields are left out rather than printed as "Not provided".
+        self.assertNotIn("Social Network Link", body)
+        self.assertNotIn("Not provided", body)
+        self.assertIn("Event Name: AI Workshop", body)
 
 
 class DraftVisibilityTests(unittest.TestCase):
@@ -586,10 +589,13 @@ class ReportAttachmentChoiceTests(unittest.TestCase):
         for name in ("stage.png", "teaser.mp4", "circular.pdf", "summary.pdf"):
             self.assertNotIn(name, text)
 
-    def test_empty_description_still_has_its_section(self) -> None:
+    def test_the_report_carries_no_description_section(self) -> None:
+        # The description was taken out of the report (5e9de2c); an empty one
+        # must not bring back an empty section either.
         text = pdf_text(build_event_report_pdf(approved_event(description=""), {"name": "T"}, [], []).getvalue())
-        self.assertIn("2. Event Description", text)
-        self.assertIn("No description provided.", text)
+        self.assertNotIn("Event Description", text)
+        self.assertNotIn("No description provided.", text)
+        self.assertIn("1. Event Details", text)
 
     def test_query_flags_and_stored_options_mean_the_same(self) -> None:
         from app.services.report_files import resolve_customization

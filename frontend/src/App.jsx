@@ -43,6 +43,7 @@ const TeacherProfile = lazy(() => import("./pages/teacher/Profile"));
 const Research = lazy(() => import("./pages/teacher/Research"));
 const ResearchForm = lazy(() => import("./pages/teacher/ResearchForm"));
 const ResearchDetails = lazy(() => import("./pages/teacher/ResearchDetails"));
+const ResearchFaculty = lazy(() => import("./pages/teacher/ResearchFaculty"));
 
 // Dean
 const DeanDashboard = lazy(() => import("./pages/dean/DeanDashboard"));
@@ -273,6 +274,15 @@ function App() {
               }
             />
 
+            <Route
+              path="/dean/research/faculty"
+              element={
+                <ProtectedRoute allowedRoles={["dean"]}>
+                  <ResearchFaculty dean />
+                </ProtectedRoute>
+              }
+            />
+
             <Route path="/dean/research/analytics" element={<Navigate to="/dean/research" replace />} />
             <Route
               path="/dean/research/:recordId"
@@ -461,6 +471,16 @@ function App() {
                 <ProtectedRoute allowedRoles={["event_manager"]}>
                   <PanelProvider panel={EVENT_MANAGER_PANEL}>
                     <Research />
+                  </PanelProvider>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/event_manager/research/faculty"
+              element={
+                <ProtectedRoute allowedRoles={["event_manager"]}>
+                  <PanelProvider panel={EVENT_MANAGER_PANEL}>
+                    <ResearchFaculty />
                   </PanelProvider>
                 </ProtectedRoute>
               }

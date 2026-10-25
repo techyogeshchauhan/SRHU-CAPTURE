@@ -711,5 +711,27 @@ class ActivityTests(DeanTeacherTestCase):
         self.assertEqual([log["action"] for log in data["logs"]], ["user_deactivated"])
 
 
+class ExportTests(DeanTeacherTestCase):
+    def test_the_teacher_list_downloads_as_filtered(self):
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        response = self.client.get("/dean/teachers/export.xlsx", params={"q": "Meera"}, headers=self.auth(self.dean))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("teachers-", response.headers["content-disposition"])
+        sheet = load_workbook(BytesIO(response.content)).active
+        header = [c.value for c in sheet[4]]
+        row = dict(zip(header, [c.value for c in sheet[5]]))
+        self.assertEqual((row["Name"], row["Department"], row["Phone"], row["Account"]),
+                         ("Meera Joshi", "CSE", "9876543210", "Active"))
+        self.assertIsNone(sheet["A6"].value)
+        self.assertNotIn("password_hash", header)
+        everyone = load_workbook(BytesIO(self.client.get(
+            "/dean/teachers/export.xlsx", params={"status": "inactive"}, headers=self.auth(self.dean)).content)).active
+        self.assertEqual(everyone["A5"].value, "Inactive Ina")
+        self.assertEqual(self.client.get("/dean/teachers/export.xlsx", headers=self.auth(self.teacher)).status_code, 403)
+
+
 if __name__ == "__main__":
     unittest.main()

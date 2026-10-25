@@ -4,7 +4,8 @@ import { useSearchParams } from "react-router-dom";
 import { DEFAULT_PER_PAGE, PER_PAGE_OPTIONS } from "../../hooks/useTableQuery";
 
 // `from` and `to`: a research-date range (the Dean's period filter).
-const KEYS = ["q", "status", "category", "year", "from", "to"];
+// `faculty`: one faculty member's records (from the faculty-wise view).
+const KEYS = ["q", "status", "category", "year", "from", "to", "faculty"];
 
 /**
  * The research lists' filters and paging, held in the URL (as useTableQuery
@@ -25,6 +26,7 @@ export default function useResearchQuery({ status: defaultStatus = "all", catego
       year: params.get("year") || "",
       from: params.get("from") || "",
       to: params.get("to") || "",
+      faculty: params.get("faculty") || "",
       page,
       per,
       skip: (page - 1) * per,
@@ -63,7 +65,7 @@ export default function useResearchQuery({ status: defaultStatus = "all", catego
   const setPage = useCallback((page) => write({ ...query, page: Math.max(1, page) }), [query, write]);
   const setPerPage = useCallback((per) => write({ ...query, per, page: 1 }), [query, write]);
   const reset = useCallback(
-    () => write({ q: "", status: defaultStatus, category: "", year: "", from: "", to: "", page: 1, per: query.per }),
+    () => write({ q: "", status: defaultStatus, category: "", year: "", from: "", to: "", faculty: "", page: 1, per: query.per }),
     [write, defaultStatus, query.per],
   );
 

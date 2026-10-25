@@ -107,6 +107,13 @@ class FakeFiles:
         self.docs = [d for d in self.docs if not self._matches(d, query)]
         return MagicMock(deleted_count=before - len(self.docs))
 
+    def update_one(self, query, update):
+        for d in self.docs:
+            if self._matches(d, query):
+                d.update(copy.deepcopy(update.get("$set", {})))
+                return MagicMock(matched_count=1)
+        return MagicMock(matched_count=0)
+
     def find_one_and_delete(self, query):
         for d in self.docs:
             if self._matches(d, query):
@@ -675,6 +682,55 @@ class StreamingTests(UploadTests):
                 response.json()["detail"],
                 "You have exceeded the limit. Maximum allowed video size is 50 MB.",
             )
+
+
+class PreviewUploadTests(UploadTests):
+    """A posted photo gets a small preview beside it; a video does not."""
+
+    def test_a_photo_comes_back_with_a_preview(self) -> None:
+        from PIL import Image
+
+        def fake_save(data, *, file_name, content_type, kind, event_id, teacher_id):
+            payload = data if isinstance(data, bytes) else data.read()
+            self.saved.append({"content_type": content_type, "file_name": file_name, "size": len(payload), "kind": kind})
+            file_id = str(ObjectId())
+            return {"storage": "gridfs", "object_key": None, "file_id": file_id, "url": f"/files/{file_id}"}
+
+        photo = io.BytesIO()
+        Image.new("RGB", (2000, 1500), "#4477aa").save(photo, format="JPEG")
+        with patch("app.services.media_previews.save_upload", side_effect=fake_save), \
+                patch("app.services.media_previews.settings.media_previews_enabled", True):
+            response = self.upload("stage.jpg", photo.getvalue(), "image/jpeg")
+        self.assertEqual(response.status_code, 201, response.text)
+        media = response.json()["media"]
+        self.assertIn("/files/", media["preview_url"])
+        self.assertNotIn("preview", media)
+        stored = self.media.docs[0]["preview"]
+        self.assertEqual(stored["content_type"], "image/webp")
+        self.assertEqual([item["kind"] for item in self.saved if item.get("kind")], ["preview"])
+        self.assertLess(stored["file_size"], len(photo.getvalue()))
+        # Listed with it too.
+        listed = self.client.get(f"/teacher/events/{self.event_id}/media", headers=self.auth)
+        if listed.status_code == 200:
+            self.assertIn("preview_url", listed.json()["media"][0])
+
+    def test_an_unreadable_photo_is_still_uploaded_without_one(self) -> None:
+        response = self.upload("photo.jpg", JPEG, "image/jpeg")
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertNotIn("preview_url", response.json()["media"])
+
+
+class TeacherMyEventsPagingTests(UploadTests):
+    """The teacher's My Events asks for one filtered page too."""
+
+    def test_a_page_with_tab_counts(self) -> None:
+        response = self.client.get("/teacher/events", params={"paged": "true", "limit": 10}, headers=self.auth)
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual([e["id"] for e in body["events"]], [self.event_id])
+        self.assertEqual((body["total"], body["counts"]["all"], body["counts"]["draft"]), (1, 1, 1))
+        drafts_only = self.client.get("/teacher/events", params={"paged": "true", "status": "approved"}, headers=self.auth)
+        self.assertEqual(drafts_only.json()["total"], 0)
 
 
 class ReportPhotoChoiceTests(UploadTests):
