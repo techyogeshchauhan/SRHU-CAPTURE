@@ -161,7 +161,8 @@ OTHER_KINDS = [
     ("Editorial board / reviewer", "Journal of Mountain Science"),
     ("Consultancy", "Uttarakhand Jal Sansthan"),
     ("Copyright / design registration", "Copyright Office, Government of India"),
-    ("Invited talk", "IIT Mandi"),
+    ("Invited talk / Guest lecture", "IIT Mandi"),
+    ("Session chair", "IEEE Uttarakhand Section"),
     ("MoU / collaboration", "Wadia Institute of Himalayan Geology"),
 ]
 
@@ -170,7 +171,10 @@ PLANS = (
     ["verified_dean"] * 25 + ["recorded_manager"] * 20 + ["submitted"] * 12 + ["resubmitted"] * 3
     + ["changes_requested"] * 6 + ["rejected"] * 4 + ["draft_teacher"] * 6 + ["draft_manager"] * 4
 )
-CATEGORY_MIX = ["journal"] * 28 + ["conference"] * 16 + ["patent"] * 10 + ["book"] * 8 + ["other"] * 8
+CATEGORY_MIX = (
+    ["journal"] * 26 + ["conference"] * 14 + ["patent"] * 10 + ["book"] * 7
+    + ["funded_project"] * 6 + ["other"] * 7
+)
 
 CHANGE_NOTES = [
     "Please attach the acceptance letter and correct the page numbers.",
@@ -223,7 +227,9 @@ def _authors(rng: random.Random, faculty_name: str) -> tuple[str, str]:
     """(author list, the faculty member's position on it)."""
     me = faculty_name.removeprefix("Dr. ")
     others = rng.sample(CO_AUTHORS, rng.randint(1, 4))
-    position = rng.choice(["First author", "First author", "Corresponding author", "Co-author"])
+    position = rng.choice([
+        "First author / Corresponding author", "First author / Corresponding author", "Corresponding author", "Co-author",
+    ])
     if position == "Co-author":
         others.insert(rng.randint(1, len(others)), me)
         names = others
@@ -238,9 +244,9 @@ def _journal(rng, n, faculty_name, today, final):
     day = _day(rng, date(2022, 7, 1), today)
     journal, publisher, issn = rng.choice(JOURNALS)
     authors, position = _authors(rng, faculty_name)
-    outcome = rng.choice(["published", "published", "published", "in_press", "accepted"])
+    outcome = "published"
     first = rng.randint(1, 900)
-    indexing = rng.sample(["Scopus", "Web of Science", "UGC-CARE", "PubMed", "Google Scholar"], rng.randint(1, 3))
+    indexing = rng.sample(["SCI", "SCIE", "Scopus", "Web of Science", "PubMed", "Google Scholar"], rng.randint(1, 3))
     details = {
         "authors": authors, "author_position": position, "journal": journal, "publisher": publisher,
         "issn": issn, "indexing": indexing, "quartile": rng.choice(["Q1", "Q2", "Q2", "Q3"]),
@@ -261,15 +267,15 @@ def _conference(rng, n, faculty_name, today, final):
     day = _day(rng, date(2022, 7, 1), today - timedelta(days=3))
     name, organiser, venue = rng.choice(CONFERENCES)
     authors, _ = _authors(rng, faculty_name)
-    outcome = rng.choice(["presented", "published", "published", "accepted"])
+    outcome = "presented"
     details = {
         "presentation_type": rng.choice(["Oral presentation", "Oral presentation", "Poster", "Invited talk", "Keynote"]),
         "authors": authors, "conference": name, "organiser": organiser,
         "level": "National" if "National" in name else "International",
-        "venue": venue, "mode": "Online" if venue == "Online" else rng.choice(["In person", "Hybrid"]),
+        "venue": venue, "mode": "Online" if venue == "Online" else rng.choice(["Offline", "Hybrid"]),
         "end_date": (day + timedelta(days=rng.randint(1, 3))).isoformat(),
     }
-    if outcome == "published":
+    if rng.random() < 0.5:
         details.update(proceedings=f"Proceedings of the {name}", isbn=f"978-81-{rng.randint(10000, 99999)}-{rng.randint(10, 99)}-{rng.randint(0, 9)}",
                        doi=f"10.5555/srhu-demo.conf.{day.year}.{n:03d}")
     return rng.choice(TOPICS), day, outcome, details
@@ -280,6 +286,7 @@ def _patent(rng, n, faculty_name, today, final):
     me = faculty_name.removeprefix("Dr. ")
     outcome = rng.choice(["filed", "filed", "published", "published", "granted"])
     details = {
+        "ipr_type": rng.choice(["Patent", "Patent", "Patent", "Copyright", "Industrial design"]),
         "inventors": ", ".join([me, *rng.sample(CO_AUTHORS, rng.randint(1, 3))]),
         "office": rng.choice(["India (IPO)", "India (IPO)", "India (IPO)", "PCT / WIPO"]),
         "application_number": f"{day.year}11{rng.randint(1000000, 9999999)}",
@@ -302,6 +309,21 @@ def _project(rng, n, faculty_name, today, final):
         "role": rng.choice(["Principal Investigator", "Principal Investigator", "Co-Principal Investigator"]),
         "end_date": (day + timedelta(days=rng.choice([365, 730, 1095]))).isoformat(),
     }
+    return rng.choice(TOPICS), day, outcome, details
+
+
+def _funded_project(rng, n, faculty_name, today, final):
+    day = _day(rng, date(2021, 7, 1), today - timedelta(days=20))
+    outcome = rng.choice(["ongoing", "ongoing", "completed"])
+    funding = rng.choice(["Intramural", "Extramural", "Extramural"])
+    details = {
+        "funding_type": funding,
+        "role": rng.choice(["Principal Investigator", "Principal Investigator", "Co-Principal Investigator"]),
+        "amount": rng.choice([150000, 300000, 750000, 1200000, 2500000]),
+        "end_date": (day + timedelta(days=rng.choice([365, 730, 1095]))).isoformat(),
+    }
+    if funding == "Extramural":
+        details["funding_agency"] = rng.choice(["DST", "SERB", "ICMR", "DBT", "UCOST"])
     return rng.choice(TOPICS), day, outcome, details
 
 
@@ -333,7 +355,8 @@ def _other(rng, n, faculty_name, today, final):
         "Award / honour": "Young Scientist Award", "Fellowship": "Visiting Fellowship",
         "PhD supervision": "PhD awarded to research scholar", "Editorial board / reviewer": "Reviewer for journal",
         "Consultancy": "Water quality consultancy", "Copyright / design registration": "Copyright for learning software",
-        "Invited talk": "Invited talk on AI for the Himalaya", "MoU / collaboration": "Research collaboration MoU",
+        "Invited talk / Guest lecture": "Invited talk on AI for the Himalaya",
+        "Session chair": "Session chair at a regional symposium", "MoU / collaboration": "Research collaboration MoU",
     }
     details = {"kind": kind, "awarded_by": body, "level": rng.choice(["International", "National", "State"]),
                "description": f"{titles[kind]} ({body})."}
@@ -342,7 +365,7 @@ def _other(rng, n, faculty_name, today, final):
 
 MAKERS = {
     "journal": _journal, "conference": _conference, "patent": _patent,
-    "project": _project, "book": _book, "other": _other,
+    "project": _project, "book": _book, "funded_project": _funded_project, "other": _other,
 }
 
 
@@ -379,8 +402,6 @@ def build_batch(count: int, faculty: list[dict], *, seed: int = 2026, today: dat
             record_date=day.isoformat(),
             outcome_status=outcome,
             details=details,
-            abstract=(f"Demo abstract. This study examines {title[0].lower()}{title[1:]}, "
-                      "with field data from Uttarakhand." if key in ("journal", "conference") else None),
             link=f"https://doi.org/{details['doi']}" if details.get("doi") else None,
         )
         record["seed_batch"] = TAG

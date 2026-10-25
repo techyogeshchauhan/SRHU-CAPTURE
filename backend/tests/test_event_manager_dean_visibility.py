@@ -167,6 +167,9 @@ class TestEventManagerDeanVisibility(unittest.TestCase):
         stats_res = self.client.get("/dean/dashboard/stats", headers=headers)
         self.assertEqual(stats_res.status_code, 200)
         self.assertGreater(stats_res.json()["approved_events"], 0)
+        # Per-type counts come with the stats, adding up to the same total.
+        by_type = stats_res.json()["event_types"]
+        self.assertEqual(sum(by_type.values()), stats_res.json()["total_events"])
 
         # 4. Dean views single event details
         detail_res = self.client.get(f"/dean/events/{event_id}", headers=headers)

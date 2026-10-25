@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { apiJson } from "../../services/api";
+import { downloadMyEventsExcel } from "../../services/downloads";
 import { useOriginState } from "../../hooks/useOriginState";
 import { fetchCurrentUser, signOut } from "../../services/auth";
 import { canTeacherEditEvent, getRefusalReason } from "../../utils/constants";
@@ -23,17 +24,13 @@ import {
 } from "../../services/eventManager";
 import Modal from "../../components/teacher/Modal";
 import DateRangeModal from "../../components/common/DateRangeModal";
+import DownloadExcelButton from "../../components/common/DownloadExcelButton";
 import Pagination from "../../components/common/Pagination";
 import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
 import EventReportButton from "../../components/common/EventReportButton";
 import { eventReportRestriction, selectedReportsRestriction } from "../../utils/eventReportEligibility";
 import StatusChip from "../../components/teacher/StatusChip";
-import {
-  isApprovedStatus,
-  isPendingStatus,
-  isRefusedStatus,
-  trackOf,
-} from "../../components/teacher/status";
+import { isRefusedStatus, trackOf } from "../../components/teacher/status";
 import {
   IconAlertTriangle,
   IconArrowRight,
@@ -204,9 +201,16 @@ function MyEvents() {
   const activeFilter = searchParams.get("filter") || "all";
   const activeEventType = panel.role === "event_manager" ? searchParams.get("type") || "" : "";
 
-  // Data state
+  // Data state. `events` is the page of saved events the server sent, under
+  // the filters below; drafts kept only in this browser are filtered here.
   const [events, setEvents] = useState([]);
+  const [listing, setListing] = useState({ total: 0, grandTotal: 0, counts: {}, eventTypes: [] });
   const [drafts, setDrafts] = useState([]);
+  // Every event seen on any page, so a selection made on one page still
+  // knows what it holds on another.
+  const [knownItems, setKnownItems] = useState(() => new Map());
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = () => setReloadKey((key) => key + 1);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -214,6 +218,8 @@ function MyEvents() {
 
   // Search & date filter state
   const [searchQuery, setSearchQuery] = useState("");
+  // What the server is asked for: the search once typing pauses.
+  const [searchTerm, setSearchTerm] = useState("");
   const [dateFilter, setDateFilter] = useState("all_time"); // all_time | today | this_week | this_month | custom
   const [customFromDate, setCustomFromDate] = useState("");
   const [customToDate, setCustomToDate] = useState("");
@@ -243,18 +249,11 @@ function MyEvents() {
 
       setProfile(userProfile);
 
-      // Fetch teacher's events from the API (MongoDB)
-      const { events: teacherEvents } = await apiJson(`${panel.api}/events`);
-
-      // Fetch local teacher drafts
-      const teacherDrafts = getTeacherDrafts(userProfile.id);
-
-      setEvents(teacherEvents || []);
-      setDrafts(teacherDrafts || []);
+      // Drafts kept only in this browser; the saved events load a page at a time.
+      setDrafts(getTeacherDrafts(userProfile.id) || []);
     } catch (err) {
       console.error("My Events error:", err);
       setError(err.message || "Failed to load events.");
-    } finally {
       setLoading(false);
     }
   };
@@ -262,6 +261,12 @@ function MyEvents() {
   useEffect(() => {
     fetchEvents();
   }, []);
+
+  useEffect(() => {
+    if (searchTerm === searchQuery.trim()) return undefined;
+    const timer = setTimeout(() => setSearchTerm(searchQuery.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, searchTerm]);
 
   // Feedback is shown as a floating toast so it never pushes the list down
   // and forces the teacher to scroll.
@@ -348,6 +353,7 @@ function MyEvents() {
       } else {
         await apiJson(`${panel.api}/events/${deletingEvent.id}`, { method: "DELETE" });
         setEvents((prev) => prev.filter((e) => e.id !== deletingEvent.id));
+        reload();
       }
 
       setSuccessMessage("Event deleted successfully.");
@@ -360,67 +366,88 @@ function MyEvents() {
     }
   };
 
-  // Combined events and drafts
-  const allCombinedItems = useMemo(() => {
-    const items = [
-    ...drafts.map((d) => ({ ...d, isDraft: true, status: "draft" })),
-    ...events.map((e) => ({ ...e, isDraft: false })),
-  ];
+  // The date filter as the range the server is asked for (local calendar
+  // days: new Date("YYYY-MM-DD") would be UTC midnight).
+  const dateRange = useMemo(() => {
+    if (dateFilter === "today") return { start: localDateKey(), end: localDateKey() };
+    if (dateFilter === "this_week") {
+      const day = new Date().getDay();
+      const sinceMonday = day === 0 ? 6 : day - 1;
+      return { start: localDateKeyOffset(-sinceMonday), end: localDateKeyOffset(6 - sinceMonday) };
+    }
+    if (dateFilter === "this_month") {
+      const month = localDateKey().slice(0, 7);
+      return { start: `${month}-01`, end: `${month}-31` };
+    }
+    if (dateFilter === "custom") return { start: customFromDate, end: customToDate };
+    return { start: "", end: "" };
+  }, [dateFilter, customFromDate, customToDate]);
 
-  // Event Manager: newest first across browser drafts and saved events, so an
-  // event just created is at the top. The teacher list keeps its own order.
-  if (!panel.approval) {
-    const createdAt = (item) => new Date(item.created_at || item.updated_at || 0).getTime() || 0;
-    items.sort((a, b) => createdAt(b) - createdAt(a));
-  }
-    return items;
-  }, [drafts, events, panel.approval]);
+  // What the server is asked for, shared with the Excel download.
+  const listFilters = useMemo(() => ({
+    q: searchTerm,
+    status: activeFilter === "submitted" ? "pending" : activeFilter,
+    event_type: activeEventType,
+    start_date: dateRange.start,
+    end_date: dateRange.end,
+  }), [searchTerm, activeFilter, activeEventType, dateRange]);
+
+  // A new filter is a new list: back to its first page.
+  const filterKey = JSON.stringify(listFilters);
+  const [paging, setPaging] = useState({ key: filterKey, page: 1, per: 25 });
+  if (paging.key !== filterKey) setPaging({ ...paging, key: filterKey, page: 1 });
+  const currentPage = paging.page;
+
+  useEffect(() => {
+    if (!profile) return undefined;
+    const controller = new AbortController();
+    setLoading(true);
+    const params = new URLSearchParams({ paged: "true", skip: String((currentPage - 1) * paging.per), limit: String(paging.per) });
+    for (const [key, value] of Object.entries(listFilters)) if (value && value !== "all") params.set(key, value);
+    apiJson(`${panel.api}/events?${params}`, { signal: controller.signal })
+      .then((body) => {
+        if (controller.signal.aborted) return;
+        const page = (body?.events || []).map((e) => ({ ...e, isDraft: false }));
+        setEvents(page);
+        setListing({
+          total: body?.total || 0,
+          grandTotal: body?.grand_total ?? body?.total ?? 0,
+          counts: body?.counts || {},
+          eventTypes: body?.event_types || [],
+        });
+        setKnownItems((previous) => new Map([...previous, ...page.map((item) => [item.id, item])]));
+      })
+      .catch((err) => {
+        if (controller.signal.aborted || err?.name === "AbortError") return;
+        console.error("My Events error:", err);
+        setError(err?.message || "Failed to load events.");
+      })
+      .finally(() => !controller.signal.aborted && setLoading(false));
+    return () => controller.abort();
+  }, [profile, panel.api, listFilters, currentPage, paging.per, reloadKey]);
+
+  // Drafts kept only in this browser, as rows.
+  const localDrafts = useMemo(
+    () => drafts.map((d) => ({ ...d, isDraft: true, status: "draft" })),
+    [drafts],
+  );
 
   const eventTypeOptions = useMemo(() => [...new Set([
     activeEventType,
-    ...allCombinedItems.map(eventTypeOf),
-  ].filter(Boolean))].sort((a, b) => a.localeCompare(b)), [allCombinedItems, activeEventType]);
+    ...listing.eventTypes,
+    ...localDrafts.map(eventTypeOf),
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b)), [listing.eventTypes, localDrafts, activeEventType]);
 
-  // Calculate tab counts. Drafts are counted from the combined list, not from
-  // `drafts` alone: once a draft has a file attached it lives on the server and
-  // arrives in `events` with a "draft" status, which is what the filter below
-  // matches on.
-  const tabCounts = {
-    all: allCombinedItems.length,
-    draft: allCombinedItems.filter((item) => item.status === "draft").length,
-    pending: events.filter((e) => isPendingStatus(e.status)).length,
-    // Approved includes events the Dean has since marked in progress or
-    // completed; each row's status pill still names the exact stage.
-    approved: events.filter((e) => isApprovedStatus(e.status)).length,
-    // Revoked counts here too: the Dean's own Rejected tab buckets the two
-    // together (STATUS_BUCKETS in the events router), and a revoked event
-    // otherwise appeared under "All" and nowhere else.
-    rejected: events.filter((e) => isRefusedStatus(e.status)).length,
-    recorded: events.filter((e) => e.status === "recorded").length,
-  };
-
-  // --- Filtering Conditions ---
-  const filteredItems = useMemo(() => {
+  // --- Filtering the browser-only drafts, as the server filters the rest ---
+  const matchingLocalDrafts = useMemo(() => {
     const matchesSearch = (item) => {
-      if (!searchQuery.trim()) return true;
-      const q = searchQuery.toLowerCase().trim();
+      if (!searchTerm) return true;
+      const q = searchTerm.toLowerCase();
       const name = (item.event_name || item.eventName || "").toLowerCase();
       const venue = (item.location || "").toLowerCase();
       const { meta } = decodeEventMetadata(item.description || "");
       const dept = (item.department || meta.department || "").toLowerCase();
       return name.includes(q) || venue.includes(q) || dept.includes(q);
-    };
-
-    const matchesStatus = (item) => {
-      if (activeFilter === "all") return true;
-      if (activeFilter === "draft") return item.status === "draft";
-      if (activeFilter === "pending" || activeFilter === "submitted") {
-        return isPendingStatus(item.status);
-      }
-      if (activeFilter === "approved") return isApprovedStatus(item.status);
-      if (activeFilter === "rejected") return isRefusedStatus(item.status);
-      if (activeFilter === "recorded") return item.status === "recorded";
-      return true;
     };
 
     const matchesDate = (item) => {
@@ -455,20 +482,26 @@ function MyEvents() {
       return true;
     };
 
-    // Evaluates combination of Search + Status + Date Filter (AND logic)
-    return allCombinedItems.filter(
+    // Evaluates combination of Search + Date Filter (AND logic); a browser
+    // draft is in the All and Draft tabs only.
+    return localDrafts.filter(
       (item) => (!activeEventType || eventTypeOf(item) === activeEventType)
-        && matchesSearch(item) && matchesStatus(item) && matchesDate(item)
+        && matchesSearch(item) && matchesDate(item)
     );
-  }, [allCombinedItems, searchQuery, activeFilter, activeEventType, dateFilter, customFromDate, customToDate]);
+  }, [localDrafts, searchTerm, activeEventType, dateFilter, customFromDate, customToDate]);
+  const localInTab = activeFilter === "all" || activeFilter === "draft" ? matchingLocalDrafts : [];
 
-  // Browser-only drafts must participate in exactly the same filters and bulk
-  // selections as server events. Page the merged view without losing selection.
-  const filterKey = JSON.stringify([searchQuery, activeFilter, activeEventType, dateFilter, customFromDate, customToDate]);
-  const [paging, setPaging] = useState({ key: filterKey, page: 1, per: 25 });
-  if (paging.key !== filterKey) setPaging({ ...paging, key: filterKey, page: 1 });
-  const currentPage = paging.key === filterKey ? Math.min(paging.page, Math.max(1, Math.ceil(filteredItems.length / paging.per))) : 1;
-  const pageItems = filteredItems.slice((currentPage - 1) * paging.per, currentPage * paging.per);
+  // Tab counts come from the server, under the same filters as the list;
+  // browser drafts are added to All and Draft.
+  const tabCounts = {
+    ...listing.counts,
+    all: (listing.counts.all || 0) + matchingLocalDrafts.length,
+    draft: (listing.counts.draft || 0) + matchingLocalDrafts.length,
+  };
+
+  // Browser drafts open the first page; the server's page follows.
+  const pageItems = [...(currentPage === 1 ? localInTab : []), ...events];
+  const matchingCount = listing.total + localInTab.length;
 
   const canDeleteItem = (item) => item.isDraft || canTeacherEditEvent(item);
 
@@ -480,10 +513,12 @@ function MyEvents() {
   // covers the Event Manager's recorded events.
   const selectable = () => true;
   const reportable = (item) => panel.reports && !eventReportRestriction(item);
-  const visibleSelectable = filteredItems.map((item) => item.id);
+  const visibleSelectable = pageItems.map((item) => item.id);
   const allVisibleSelected =
     visibleSelectable.length > 0 && visibleSelectable.every((id) => selected.has(id));
-  const selectedItems = allCombinedItems.filter((item) => selected.has(item.id));
+  const selectedItems = [...selected]
+    .map((id) => knownItems.get(id) || localDrafts.find((item) => item.id === id))
+    .filter(Boolean);
   const draftSelectedItems = selectedItems.filter(
     (item) => item.isDraft || String(item.status || "").toLowerCase() === "draft",
   );
@@ -528,7 +563,7 @@ function MyEvents() {
       return;
     }
     // Keep the order the list shows them in.
-    const ordered = filteredItems.map((item) => item.id).filter((id) => selectedIds.includes(id));
+    const ordered = pageItems.map((item) => item.id).filter((id) => selectedIds.includes(id));
     const rest = selectedIds.filter((id) => !ordered.includes(id));
     setError("");
     setCustomizingReport({
@@ -579,6 +614,7 @@ function MyEvents() {
         );
         deleted += gone.size;
         setEvents((prev) => prev.filter((e) => !gone.has(e.id)));
+        reload();
         const refused = (result?.results || []).filter((r) => r.status === "skipped");
         if (refused.length) setError(skippedMessage(refused, "deleted"));
       }
@@ -620,6 +656,8 @@ function MyEvents() {
       );
       const newStatus = panel.approval ? "pending" : "recorded";
       setEvents((prev) => prev.map((e) => (done.has(e.id) ? { ...e, status: newStatus } : e)));
+      setKnownItems((previous) => new Map([...previous].map(([id, item]) => [id, done.has(id) ? { ...item, status: newStatus } : item])));
+      reload();
       setSelected((current) => new Set([...current].filter((id) => !done.has(id))));
       setBulkSubmit(false);
       if (done.size) {
@@ -662,7 +700,7 @@ function MyEvents() {
       active="events"
       profile={profile}
       onLogout={handleLogout}
-      railBadge={tabCounts.all}
+      railBadge={listing.grandTotal + localDrafts.length}
       railNote={
         panel.reports
           ? "Search and filter, tick events, then record, report on or delete them together."
@@ -830,6 +868,16 @@ function MyEvents() {
               </div>
             )}
 
+            {/* The list as filtered here. Drafts kept only in this browser
+                are not on the server, so they are not in the file. */}
+            <DownloadExcelButton
+              className="btn btn-ghost btn-sm shrink-0"
+              disabled={listing.total === 0}
+              onDownload={() => downloadMyEventsExcel(listFilters, { api: panel.api })}
+              onError={setError}
+              title="The events listed below, as an Excel file"
+            />
+
             <Link
               to={`${panel.base}/create-event`}
               state={originState}
@@ -868,10 +916,10 @@ function MyEvents() {
                       type="checkbox"
                       checked={allVisibleSelected}
                       onChange={toggleAllVisible}
-                      aria-label="Select all matching events"
+                      aria-label="Select every event on this page"
                       className="h-4 w-4 cursor-pointer rounded border-line text-accent focus:ring-accent"
                     />
-                    Select all matching
+                    Select all on this page
                   </label>
                   <button
                     type="button"
@@ -912,7 +960,7 @@ function MyEvents() {
                 </>
               )}
               <p className="num text-xs font-medium text-muted">
-                {filteredItems.length} matching of {allCombinedItems.length} events
+                {matchingCount} matching of {listing.grandTotal + localDrafts.length} events
               </p>
 
               {isFiltered && (
@@ -941,7 +989,7 @@ function MyEvents() {
             </div>
           )}
 
-          {!loading && filteredItems.length === 0 ? (
+          {!loading && pageItems.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
               <span className="icon-tile mb-4 h-14 w-14 rounded-2xl">
                 <IconInbox className="h-6 w-6" />
@@ -1145,8 +1193,8 @@ function MyEvents() {
               </table>
             </div>
           )}
-          {filteredItems.length > 0 && <Pagination
-            page={currentPage} perPage={paging.per} total={filteredItems.length} disabled={loading}
+          {listing.total > 0 && <Pagination
+            page={currentPage} perPage={paging.per} total={listing.total} disabled={loading}
             onPageChange={(page) => setPaging({ ...paging, page })}
             onPerPageChange={(per) => setPaging({ ...paging, per, page: 1 })}
           />}

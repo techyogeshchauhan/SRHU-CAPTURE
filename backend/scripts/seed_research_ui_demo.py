@@ -70,7 +70,8 @@ ACHIEVEMENTS = (
     ("Editorial board / reviewer", "Journal of Mountain Science", "Invited editorial and peer-review contribution"),
     ("Consultancy", "Uttarakhand Jal Sansthan", "Technical advice for community water-quality monitoring"),
     ("Copyright / design registration", "Copyright Office, Government of India", "Educational resource for rural health training"),
-    ("Invited talk", "IIT Mandi", "Invited lecture on resilient mountain communities"),
+    ("Invited talk / Guest lecture", "IIT Mandi", "Invited lecture on resilient mountain communities"),
+    ("Session chair", "IEEE Uttarakhand Section", "Chaired the technical session on sustainable systems"),
     ("MoU / collaboration", "Wadia Institute of Himalayan Geology", "Collaborative research programme in the western Himalaya"),
 )
 COAUTHORS = (
@@ -129,21 +130,22 @@ def _record_content(category_key: str, number: int, faculty_name: str, record_da
     category = CATEGORIES[category_key]
 
     if category_key == "journal":
-        outcome = rng.choice(("accepted", "in_press", "published"))
+        outcome = "published"
         details = {
             "author_position": rng.choice(category.fields[0].options),
             "journal": rng.choice(JOURNALS),
-            "indexing": rng.sample(("Scopus", "Web of Science", "UGC-CARE", "PubMed", "Google Scholar"), rng.randint(1, 3)),
+            "indexing": rng.sample(("SCI", "SCIE", "Scopus", "Web of Science", "PubMed", "Google Scholar"), rng.randint(1, 3)),
             "quartile": rng.choice(("Q1", "Q2", "Q3", "Q4")),
         }
         if number % 3 == 0:
             details["doi"] = f"10.5555/srhu-ui-sample.{number:04d}"
         title = f"A study of {topic}"
     elif category_key == "conference":
-        outcome = rng.choice(("accepted", "presented", "published"))
+        outcome = "presented"
         conference, organiser, level = rng.choice(CONFERENCES)
         details = {
-            "presentation_type": rng.choice(CATEGORIES[category_key].fields[0].options),
+            "presentation_type": rng.choice([o for o in CATEGORIES[category_key].fields[0].options if o != "Other"]),
+            "mode": rng.choice(("Offline", "Online", "Hybrid")),
             "conference": conference,
             "organiser": organiser,
             "level": level,
@@ -155,6 +157,7 @@ def _record_content(category_key: str, number: int, faculty_name: str, record_da
         outcome = rng.choice(("filed", "published", latest_patent_outcome))
         faculty_short = faculty_name.removeprefix("Dr. ")
         details = {
+            "ipr_type": "Patent",
             "inventors": f"{faculty_short}, {rng.choice(COAUTHORS)} and {rng.choice(COAUTHORS)}",
             "office": "India (IPO)",
             "application_number": f"IN{record_day.year}{number:07d}",
@@ -183,7 +186,7 @@ def _record_content(category_key: str, number: int, faculty_name: str, record_da
         outcome = "recorded"
         kind, organisation, description = ACHIEVEMENTS[(number * 3) % len(ACHIEVEMENTS)]
         details = {"kind": kind, "awarded_by": organisation, "description": description}
-        details["level"] = rng.choice(CATEGORIES[category_key].fields[2].options)
+        details["level"] = rng.choice(next(f for f in category.fields if f.key == "level").options)
         title = f"{kind}: {topic.title()}"
 
     cleaned, missing = clean_details(category, details, outcome)
@@ -218,7 +221,6 @@ def build_records(count: int, faculty: list[dict], manager: dict, *, today: date
             record_date=record_day.isoformat(),
             outcome_status=outcome,
             details=details,
-            abstract=f"Sample research record for interface review: {topic_sentence(title)}",
         )
         now = datetime.now(timezone.utc)
         record.update(
@@ -245,10 +247,6 @@ def build_records(count: int, faculty: list[dict], manager: dict, *, today: date
         record["verified_snapshot"]["evidence"] = []
         records.append(record)
     return records
-
-
-def topic_sentence(title: str) -> str:
-    return f"{title.rstrip('.')} is represented here with sample metadata for checking the existing Research pages."
 
 
 def _active_users() -> tuple[list[dict], dict | None]:

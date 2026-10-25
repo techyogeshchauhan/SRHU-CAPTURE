@@ -15,6 +15,33 @@ from app.services.research_categories import CATEGORIES
 TOP_CONTRIBUTORS = 10
 
 
+def faculty_rows(records: list[dict], people: dict[str, dict]) -> list[dict]:
+    """Every faculty member with at least one record -- their own or one they
+    co-authored -- most records first: their total and their count per
+    category. ``people`` as below."""
+    by_faculty: dict[str, Counter] = defaultdict(Counter)
+    for record in records:
+        # A co-authored paper counts for each of its SRHU authors.
+        first = record.get("faculty_id")
+        authors = dict.fromkeys(str(fid) for fid in [first, *(record.get("co_faculty_ids") or [])] if fid)
+        for faculty_id in authors:
+            by_faculty[faculty_id][record.get("category") or "other"] += 1
+
+    rows = []
+    for faculty_id, counter in by_faculty.items():
+        person = people.get(faculty_id) or {}
+        rows.append({
+            "faculty_id": faculty_id,
+            "name": person.get("name") or "Unknown",
+            "email": person.get("email"),
+            "designation": person.get("designation"),
+            "total": sum(counter.values()),
+            **{key: counter.get(key, 0) for key in CATEGORIES},
+        })
+    rows.sort(key=lambda row: (-row["total"], row["name"].casefold()))
+    return rows
+
+
 def compute_analytics(records: list[dict], people: dict[str, dict]) -> dict:
     """``people`` maps faculty id -> {"name"}.
 
@@ -26,18 +53,15 @@ def compute_analytics(records: list[dict], people: dict[str, dict]) -> dict:
     patents: Counter = Counter()
     indexing: Counter = Counter()
     quartiles: Counter = Counter()
-    by_faculty: dict[str, Counter] = defaultdict(Counter)
     other_kinds: Counter = Counter()
 
     for record in records:
         category = record.get("category") or "other"
         details = record.get("details") or {}
         outcome = record.get("outcome_status")
-        faculty_id = str(record.get("faculty_id") or "")
 
         by_category[category] += 1
         by_year[record.get("academic_year") or "Undated"][category] += 1
-        by_faculty[faculty_id][category] += 1
 
         if category == "patent":
             patents[outcome or "filed"] += 1
@@ -56,14 +80,11 @@ def compute_analytics(records: list[dict], people: dict[str, dict]) -> dict:
     if "Undated" in by_year:
         years.append("Undated")
 
-    contributors = sorted(
-        by_faculty.items(),
-        key=lambda item: (-sum(item[1].values()), (people.get(item[0]) or {}).get("name") or ""),
-    )[:TOP_CONTRIBUTORS]
+    faculty = faculty_rows(records, people)
 
     return {
         "total": len(records),
-        "faculty_count": len([fid for fid in by_faculty if fid]),
+        "faculty_count": len(faculty),
         "by_category": counts(by_category),
         "by_year": [{"academic_year": year, **counts(by_year[year])} for year in years],
         "patents": {key: patents.get(key, 0) for key, _ in CATEGORIES["patent"].outcomes},
@@ -71,12 +92,7 @@ def compute_analytics(records: list[dict], people: dict[str, dict]) -> dict:
         "quartiles": {q: quartiles.get(q, 0) for q in ("Q1", "Q2", "Q3", "Q4")},
         "other_kinds": dict(other_kinds.most_common()),
         "top_contributors": [
-            {
-                "faculty_id": faculty_id,
-                "name": (people.get(faculty_id) or {}).get("name") or "Unknown",
-                "total": sum(counter.values()),
-                **counts(counter),
-            }
-            for faculty_id, counter in contributors
+            {key: value for key, value in row.items() if key not in ("email", "designation")}
+            for row in faculty[:TOP_CONTRIBUTORS]
         ],
     }

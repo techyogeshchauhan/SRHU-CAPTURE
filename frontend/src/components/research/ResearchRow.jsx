@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 
 import { formatEventDay } from "../../utils/dates";
+import { authorNames } from "../../utils/research";
 import { trackOf } from "../teacher/status";
 import { IconChevronRight, IconClock, IconCopy, IconFile } from "../teacher/icons";
 import CategoryIcon from "./CategoryIcon";
@@ -15,7 +16,9 @@ import { OutcomeChip, VerificationChip } from "./ResearchChips";
  */
 export default function ResearchRow({ record, category, to, showFaculty = false, leading = null, showStatus = true }) {
   const evidence = record.evidence?.length || 0;
-  const faculty = record.faculty?.name;
+  const faculty = authorNames(record);
+  // A teacher's own list also holds work they co-authored with someone else.
+  const coAuthored = Boolean(record.permissions?.co_author);
   const entered =
     record.created_by && record.created_by !== record.faculty_id && record.created_by_name
       ? `Entered by ${record.created_by_name}`
@@ -63,11 +66,15 @@ export default function ResearchRow({ record, category, to, showFaculty = false,
           </span>
           <span className="prose-muted mt-0.5 flex flex-wrap gap-x-2 text-xs">
             {showFaculty && faculty && <span className="font-medium text-ink">{faculty}</span>}
+            {!showFaculty && coAuthored && <span className="font-medium text-ink">Co-author · {faculty}</span>}
             {record.record_date && <span className="num">{formatEventDay(record.record_date)}</span>}
-            <span className="inline-flex items-center gap-1">
-              <IconFile className="h-3 w-3" />
-              {evidence} {evidence === 1 ? "file" : "files"}
-            </span>
+            {/* Research takes no uploads now; older records may still carry files. */}
+            {evidence > 0 && (
+              <span className="inline-flex items-center gap-1">
+                <IconFile className="h-3 w-3" />
+                {evidence} {evidence === 1 ? "file" : "files"}
+              </span>
+            )}
             {showFaculty && entered && <span>· {entered}</span>}
           </span>
         </span>

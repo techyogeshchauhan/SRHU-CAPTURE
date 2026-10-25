@@ -98,6 +98,8 @@ def reminders_for(record: dict, today: date) -> list[Reminder]:
                     f"Published {months} months ago. Check whether the patent has been granted or refused.",
                     "update",
                 ))
+    # Journal and conference records now start at their final outcome; these
+    # two reminders only ever fire for older records.
     elif category == "journal" and outcome in ("accepted", "in_press"):
         months = _months_since(started, today)
         if months is not None and months >= 6:
@@ -111,7 +113,7 @@ def reminders_for(record: dict, today: date) -> list[Reminder]:
         if last_day and last_day < today_iso:
             found.append(Reminder(
                 "conference-presented",
-                "The conference date has passed. Mark the paper as presented and attach the certificate.",
+                "The conference date has passed. Mark the paper as presented.",
                 "update",
             ))
     elif category == "book" and outcome == "accepted":

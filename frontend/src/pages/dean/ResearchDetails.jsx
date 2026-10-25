@@ -23,7 +23,7 @@ import { OutcomeChip, VerificationChip } from "../../components/research/Researc
 import useShellProfile from "../../components/research/useShellProfile";
 import useResearchCategories from "../../hooks/useResearchCategories";
 import { deanDecideResearch, deanDeleteResearch, deanGetResearch, downloadResearchCv } from "../../services/research";
-import { changesSinceVerified } from "../../utils/research";
+import { authorNames, changesSinceVerified } from "../../utils/research";
 
 const ROLE_LABEL = { teacher: "the teacher", event_manager: "an Event Manager" };
 
@@ -185,7 +185,7 @@ export default function ResearchDetails() {
               compact
               eyebrow={category?.label || record.category_label}
               title={record.title}
-              subtitle={`${record.faculty?.name || "Unknown teacher"} · ${enteredBy}`}
+              subtitle={`${authorNames(record) || "Unknown teacher"} · ${enteredBy}`}
               actions={
                 <div className="flex flex-wrap gap-2">
                   {!record.recorded_by_manager && (

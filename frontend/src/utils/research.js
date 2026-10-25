@@ -212,6 +212,14 @@ export function compactDetails(details = {}) {
 }
 
 
+/** Every SRHU author of a record: its faculty member, then the co-authors. */
+export function authorNames(record) {
+  return [record?.faculty, ...(record?.co_faculty || [])]
+    .map((person) => person?.name)
+    .filter(Boolean)
+    .join(", ");
+}
+
 /** The one line that says what a record is, by category, for cards. */
 export function recordFacts(record) {
   const d = record?.details || {};
@@ -225,16 +233,34 @@ export function recordFacts(record) {
         d.quartile,
       );
     case "conference":
-      return join(d.conference, d.presentation_type, d.level);
+      return join(d.conference, chosen(d, "presentation_type"), d.mode, d.level);
     case "patent":
-      return join(d.office, d.application_number && `Appl. ${d.application_number}`, d.patent_number && `Patent ${d.patent_number}`);
+      return join(
+        chosen(d, "ipr_type"),
+        d.office,
+        d.application_number && `Appl. ${d.application_number}`,
+        d.patent_number && `Patent ${d.patent_number}`,
+      );
     case "project": // Display-only support for records saved before this category was retired.
       return join(d.role);
+    case "funded_project":
+      return join(
+        d.funding_type,
+        d.funding_agency,
+        typeof d.amount === "number" && `₹${d.amount.toLocaleString("en-IN")}`,
+        d.role,
+      );
     case "book":
       return join(d.book_type, d.publisher, d.isbn && `ISBN ${d.isbn}`);
     default:
-      return join(d.kind, d.awarded_by, d.level);
+      return join(chosen(d, "kind"), d.awarded_by, d.level);
   }
+}
+
+/** A choice, or the text typed in for "Other". */
+function chosen(details, key) {
+  const value = details[key];
+  return value === "Other" ? details[`${key}_other`] || value : value;
 }
 
 // Notes the system writes itself, which only restate the action beside them.

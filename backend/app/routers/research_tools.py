@@ -9,8 +9,9 @@ Who may use what
 * The NAAC export: the Event Manager (read-only) and the Dean.
 * The register export: the Dean, the Event Manager (everything) and a teacher
   (their own records).
-* A research CV: the Dean for anyone, a teacher for themselves. Not the
-  Event Manager.
+* A research CV: the Dean and the Event Manager for anyone, a teacher for
+  themselves.
+* The faculty-wise summary: the Event Manager and the Dean.
 * DOI look-up, outcomes due and reminders: both authoring roles.
 """
 
@@ -31,7 +32,7 @@ from app.models.documents import (
     new_research_record_document,
 )
 from app.routers import research as core
-from app.services.research_analytics import compute_analytics
+from app.services.research_analytics import compute_analytics, faculty_rows
 from app.services.research_categories import (
     CATEGORIES,
     DetailsError,
@@ -50,6 +51,7 @@ from app.services.research_spreadsheets import (
     import_template,
     parse_import,
 )
+from app.services.excel_export import build_workbook, xlsx_response
 from app.services.storage_service import content_disposition
 from app.utils.auth import require_role
 from app.utils.serializers import to_object_id, utc_now
@@ -124,10 +126,11 @@ def _export_query(
     q,
     start_date: str | None = None,
     end_date: str | None = None,
+    faculty_id: str | None = None,
 ) -> dict:
     if user.get("role") == "dean":
         base: dict = {}
-        core._apply_filters(base, category=category, academic_year=academic_year, faculty_id=None)
+        core._apply_filters(base, category=category, academic_year=academic_year, faculty_id=faculty_id)
         core.apply_date_range(base, start_date, end_date)
         search = core._search_clause(q, include_people=True)
         if search:
@@ -135,8 +138,14 @@ def _export_query(
         wanted = (status_filter or "all").strip().lower()
         return {**base, **core.dean_status_query(wanted)}
 
-    query = core._scope(user)
-    core._apply_filters(query, category=category, academic_year=academic_year, faculty_id=None)
+    query = core._read_scope(user)
+    # A teacher's scope already pins faculty_id; they cannot widen it.
+    core._apply_filters(
+        query,
+        category=category,
+        academic_year=academic_year,
+        faculty_id=faculty_id if user.get("role") == "event_manager" else None,
+    )
     search = core._search_clause(q, include_people=user.get("role") != "teacher")
     if search:
         query.update(search)
@@ -156,13 +165,28 @@ def _register_export(
     q,
     start_date: str | None = None,
     end_date: str | None = None,
+    faculty_id: str | None = None,
 ) -> Response:
-    query = _export_query(user, status_filter, category, academic_year, q, start_date=start_date, end_date=end_date)
+    query = _export_query(
+        user, status_filter, category, academic_year, q,
+        start_date=start_date, end_date=end_date, faculty_id=faculty_id,
+    )
     records = list(core.research_records.find(query).sort([("record_date", DESCENDING)]))
-    heading = "Research register" if user.get("role") != "teacher" else f"Research portfolio — {user.get('name') or ''}"
-    content = export_records(records, _people({r.get("faculty_id") for r in records}), heading=heading)
+    people = _people({fid for r in records for fid in core.authors_of(r)} | {faculty_id})
     stamp = date.today().isoformat()
-    return _download(content, f"research-register-{stamp}.xlsx", XLSX)
+    # One faculty member's research: a portfolio named after them.
+    if user.get("role") == "teacher":
+        owner = user.get("name") or ""
+    else:
+        owner = (people.get((faculty_id or "").strip()) or {}).get("name")
+    if owner is not None:
+        heading = f"Research portfolio — {owner}"
+        file_name = f"research-{_slug(owner)}-{stamp}.xlsx"
+    else:
+        heading = "Research register"
+        file_name = f"research-register-{stamp}.xlsx"
+    content = export_records(records, people, heading=heading)
+    return _download(content, file_name, XLSX)
 
 
 @router.get("/research/export.xlsx")
@@ -172,9 +196,10 @@ def author_export(
     category: str | None = Query(default=None, max_length=30),
     academic_year: str | None = Query(default=None, max_length=10),
     q: str | None = Query(default=None, max_length=200),
+    faculty_id: str | None = Query(default=None, max_length=40),
 ):
     user = core._author(authorization)
-    return _register_export(user, status_filter, category, academic_year, q)
+    return _register_export(user, status_filter, category, academic_year, q, faculty_id=faculty_id)
 
 
 @router.get("/dean/research/export.xlsx")
@@ -186,10 +211,12 @@ def dean_export(
     q: str | None = Query(default=None, max_length=200),
     start_date: str | None = Query(default=None, max_length=10),
     end_date: str | None = Query(default=None, max_length=10),
+    faculty_id: str | None = Query(default=None, max_length=40),
 ):
     user = core._dean(authorization)
     return _register_export(
-        user, status_filter, category, academic_year, q, start_date=start_date, end_date=end_date
+        user, status_filter, category, academic_year, q,
+        start_date=start_date, end_date=end_date, faculty_id=faculty_id,
     )
 
 
@@ -197,7 +224,7 @@ def _naac(academic_year: str | None) -> Response:
     query: dict = {"verification_status": "verified"}
     core._apply_filters(query, category=None, academic_year=academic_year, faculty_id=None)
     records = list(core.research_records.find(query))
-    content = export_naac(records, _people({r.get("faculty_id") for r in records}), period=_period(academic_year))
+    content = export_naac(records, _people({fid for r in records for fid in core.authors_of(r)}), period=_period(academic_year))
     suffix = academic_year or "all-years"
     return _download(content, f"naac-criterion-3-research-{suffix}.xlsx", XLSX)
 
@@ -229,7 +256,7 @@ def _cv(faculty_id: str) -> Response:
     person = core.users.find_one({"_id": object_id, "role": "teacher"}) if object_id else None
     if not person:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Faculty member not found")
-    records = list(core.research_records.find({"faculty_id": str(person["_id"]), "verification_status": "verified"}))
+    records = list(core.research_records.find({**core.authored_by(str(person["_id"])), "verification_status": "verified"}))
     content = build_research_cv(
         {
             "name": person.get("name") or person.get("email"),
@@ -244,9 +271,7 @@ def _cv(faculty_id: str) -> Response:
 @router.get("/research/faculty/{faculty_id}/cv.pdf")
 def author_cv(faculty_id: str, authorization: str | None = Header(default=None)):
     user = core._author(authorization)
-    if user.get("role") != "teacher":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Research CVs are for the Dean and the teacher.")
-    if faculty_id != user["id"]:
+    if user.get("role") == "teacher" and faculty_id != user["id"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can download your own research CV only.")
     return _cv(faculty_id)
 
@@ -336,7 +361,6 @@ async def preview_import(
                 "outcome_status": outcome,
                 "details": cleaned_details,
                 "link": row.get("link"),
-                "abstract": row.get("abstract"),
             }
 
         preview_rows.append({
@@ -408,7 +432,6 @@ def commit_import(
             record_date=record_date,
             outcome_status=outcome,
             details=cleaned,
-            abstract=item.get("abstract"),
             link=item.get("link"),
         )
         doc["history"] = [
@@ -457,7 +480,7 @@ def dean_analytics(
         query["verification_status"] = "verified"
     core._apply_filters(query, category=category, academic_year=academic_year, faculty_id=None)
     records = list(core.research_records.find(query))
-    people = _people({r.get("faculty_id") for r in records})
+    people = _people({fid for r in records for fid in core.authors_of(r)})
     return compute_analytics(records, people)
 
 
@@ -471,8 +494,112 @@ def manager_analytics(
     query: dict = {"verification_status": "verified"}
     core._apply_filters(query, category=category, academic_year=academic_year, faculty_id=None)
     records = list(core.research_records.find(query))
-    people = _people({r.get("faculty_id") for r in records})
+    people = _people({fid for r in records for fid in core.authors_of(r)})
     return compute_analytics(records, people)
+
+
+# ============================================================
+# FACULTY-WISE
+# ============================================================
+
+def _faculty_summary(query: dict, scope: dict) -> dict:
+    """``scope``: the records the page covers before its filters, for the
+    academic years to choose from."""
+    records = list(core.research_records.find(query, {"faculty_id": 1, "co_faculty_ids": 1, "category": 1}))
+    rows = faculty_rows(records, _people({fid for r in records for fid in core.authors_of(r)}))
+    return {
+        "success": True,
+        "faculty": rows,
+        "total": len(records),
+        "academic_years": core._academic_years(scope),
+    }
+
+
+def _faculty_workbook(summary: dict, period: str) -> Response:
+    """The faculty-wise table as the page shows it, one row per person."""
+    labels = [category.label for category in CATEGORIES.values()]
+    rows = [
+        [row["name"], row.get("designation"), row.get("email"),
+         *[row.get(key, 0) for key in CATEGORIES], row["total"]]
+        for row in summary["faculty"]
+    ]
+    content = build_workbook(
+        "Faculty-wise research", ["Faculty member", "Designation", "Email", *labels, "Total"], rows,
+        note=f"{period} · {len(rows)} faculty member{'s' if len(rows) != 1 else ''} · "
+        f"a co-authored record counts for each of its authors",
+    )
+    return xlsx_response(content, f"faculty-wise-research-{date.today().isoformat()}.xlsx")
+
+
+def _manager_summary_query(user: dict, academic_year, q) -> tuple[dict, dict]:
+    scope = {**core._scope(user), "verification_status": "verified"}
+    query = dict(scope)
+    core._apply_filters(query, category=None, academic_year=academic_year, faculty_id=None)
+    search = core._search_clause(q, include_people=True)
+    if search:
+        query.update(search)
+    return query, scope
+
+
+def _dean_summary_query(academic_year, q, start_date, end_date) -> dict:
+    query: dict = dict(core.FROM_MANAGER)
+    core._apply_filters(query, category=None, academic_year=academic_year, faculty_id=None)
+    core.apply_date_range(query, start_date, end_date)
+    search = core._search_clause(q, include_people=True)
+    if search:
+        query.update(search)
+    return query
+
+
+@router.get("/research/faculty-summary")
+def manager_faculty_summary(
+    authorization: str | None = Header(default=None),
+    academic_year: str | None = Query(default=None, max_length=10),
+    q: str | None = Query(default=None, max_length=200),
+):
+    """How much research each faculty member has: what the Event Manager has
+    recorded, per category."""
+    user = _event_manager(authorization)
+    return _faculty_summary(*_manager_summary_query(user, academic_year, q))
+
+
+@router.get("/research/faculty-summary.xlsx")
+def manager_faculty_summary_xlsx(
+    authorization: str | None = Header(default=None),
+    academic_year: str | None = Query(default=None, max_length=10),
+    q: str | None = Query(default=None, max_length=200),
+):
+    user = _event_manager(authorization)
+    return _faculty_workbook(_faculty_summary(*_manager_summary_query(user, academic_year, q)), _period(academic_year))
+
+
+@router.get("/dean/research/faculty-summary")
+def dean_faculty_summary(
+    authorization: str | None = Header(default=None),
+    academic_year: str | None = Query(default=None, max_length=10),
+    q: str | None = Query(default=None, max_length=200),
+    start_date: str | None = Query(default=None, max_length=10),
+    end_date: str | None = Query(default=None, max_length=10),
+):
+    """The same per faculty member, over what the Dean's research page shows:
+    the Event Manager's submissions."""
+    core._dean(authorization)
+    return _faculty_summary(_dean_summary_query(academic_year, q, start_date, end_date), core.FROM_MANAGER)
+
+
+@router.get("/dean/research/faculty-summary.xlsx")
+def dean_faculty_summary_xlsx(
+    authorization: str | None = Header(default=None),
+    academic_year: str | None = Query(default=None, max_length=10),
+    q: str | None = Query(default=None, max_length=200),
+    start_date: str | None = Query(default=None, max_length=10),
+    end_date: str | None = Query(default=None, max_length=10),
+):
+    core._dean(authorization)
+    summary = _faculty_summary(_dean_summary_query(academic_year, q, start_date, end_date), core.FROM_MANAGER)
+    span = " – ".join(day for day in (start_date, end_date) if day)
+    return _faculty_workbook(summary, f"Research dates {span}" if span else _period(academic_year))
+
 
 # ============================================================
 # DOI
@@ -486,6 +613,10 @@ def doi_lookup(doi: str = Query(min_length=3, max_length=300), authorization: st
     except DoiError as error:
         raise HTTPException(status_code=error.status, detail=str(error)) from None
     category = CATEGORIES.get(found["category"])
+    # A status the category does not have (a conference paper "published" in
+    # proceedings) is left for the form's own default.
+    if category and found.get("outcome_status") not in outcome_keys(category):
+        found["outcome_status"] = None
     # Whatever does not fit the form (a value Crossref spells differently)
     # is dropped field by field rather than refusing the whole suggestion.
     details = clean_details_leniently(category, found["details"], found["outcome_status"]) if category else {}

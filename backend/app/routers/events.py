@@ -44,6 +44,7 @@ from app.models.documents import (
 )
 from app.schemas.events import (
     BulkEventIdsRequest,
+    EventExportRequest,
     DeanBulkArchiveEventsRequest,
     DeanBulkDeleteEventsRequest,
     DeanDecisionBody,
@@ -58,6 +59,8 @@ from app.schemas.uploads import DirectUploadSignRequest, DirectUploadStartReques
 from app.services import email_service, report_files
 from app.services.audit_service import log_audit_event
 from app.services.event_types import resolve_event_type, write_event_with_type
+from app.services.media_previews import attach_preview, build_preview, present_media
+from app.services.excel_export import EVENT_HEADERS, build_workbook, event_rows, stamped, xlsx_response
 from app.services.event_fields import (
     many_with_legacy_metadata,
     with_legacy_metadata,
@@ -513,7 +516,7 @@ def list_media(request: Request, event_id: str) -> list[dict]:
             results = serialize_many(cursor2)
         except Exception:
             pass
-    return [absolutize(request, item, "media_url") for item in results]
+    return [present_media(request, item) for item in results]
 
 
 def list_documents(request: Request, event_id: str) -> list[dict]:
@@ -705,25 +708,27 @@ def dean_dashboard_stats(
     user = get_current_user(authorization)
     check_dean(user)
 
-    # Exclude drafts from Dean view
-    status_counts = {
-        row["_id"]: row["count"]
-        for row in events.aggregate(
-            [
-                {"$match": {"status": {"$ne": "draft"}, "archived_at": None}},
-                {"$group": {"_id": "$status", "count": {"$sum": 1}}},
-            ]
-        )
-    }
+    # Exclude drafts from Dean view. Counted per status and per event type in
+    # one pass, so the dashboard never downloads every event to draw its chart.
+    pipeline = [
+        {"$match": {"status": {"$ne": "draft"}, "archived_at": None}},
+        {"$group": {"_id": {"status": "$status", "type": "$event_type"}, "count": {"$sum": 1}}},
+    ]
+    status_counts: dict = {}
+    type_counts: dict = {}
+
+    def tally(rows) -> None:
+        for row in rows:
+            key = row["_id"] or {}
+            status_counts[key.get("status")] = status_counts.get(key.get("status"), 0) + row["count"]
+            event_type = str(key.get("type") or "").strip()
+            if event_type:
+                type_counts[event_type] = type_counts.get(event_type, 0) + row["count"]
+
+    tally(events.aggregate(pipeline))
     if _should_include_managed_events():
         try:
-            for row in managed_events.aggregate(
-                [
-                    {"$match": {"status": {"$ne": "draft"}, "archived_at": None}},
-                    {"$group": {"_id": "$status", "count": {"$sum": 1}}},
-                ]
-            ):
-                status_counts[row["_id"]] = status_counts.get(row["_id"], 0) + row["count"]
+            tally(managed_events.aggregate(pipeline))
         except Exception as exc:
             logger.warning("Error aggregating managed_events stats: %s", exc)
 
@@ -739,6 +744,8 @@ def dean_dashboard_stats(
         # getStatusBucket in the frontend), so counting only "rejected" here left
         # the card disagreeing with the tab right below it.
         "rejected_events": total("rejected", "revoked"),
+        # Events per type, for the "Programs by type" chart.
+        "event_types": type_counts,
     }
 
 
@@ -1029,6 +1036,45 @@ def get_all_events(
     }
 
 
+@router.get("/dean/events/export.xlsx")
+def export_dean_events(
+    authorization: str | None = Header(default=None),
+    event_date: str | None = Query(default=None),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+    event_type: str | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    status_bucket: str | None = Query(default=None, max_length=20),
+    source: str | None = Query(default=None, max_length=20),
+):
+    """The Dean's event list, under the same filters, as one Excel sheet."""
+    user = get_current_user(authorization)
+    check_event_viewer(user)
+    query = _dean_event_query(event_date, event_type, q, status_bucket, start_date=start_date, end_date=end_date)
+    use_events, use_managed = event_sources(source)
+
+    def newest_first(doc: dict) -> tuple[str, str]:
+        stamp = doc.get("submitted_at") or doc.get("recorded_at") or doc.get("created_at") or ""
+        return (str(stamp), str(doc.get("created_at") or ""))
+
+    event_list, total = paginate_with_managed(
+        query,
+        [("submitted_at", DESCENDING), ("created_at", DESCENDING)],
+        [("submitted_at", DESCENDING), ("recorded_at", DESCENDING), ("created_at", DESCENDING)],
+        newest_first,
+        None,
+        None,
+        sources=(use_events, use_managed),
+    )
+    many_with_legacy_metadata(event_list)
+    attach_teachers(event_list)
+    content = build_workbook(
+        "Events", EVENT_HEADERS, event_rows(event_list),
+        note=f"{total} event{'s' if total != 1 else ''} · as filtered on the Events page",
+    )
+    return xlsx_response(content, stamped("events"))
+
+
 # ============================================================
 # SELECT ALL: THE IDS OF EVERY MATCHING EVENT
 # ============================================================
@@ -1275,7 +1321,11 @@ def get_gallery(
         key: {
             "id": item.get("id"),
             "file_name": item.get("file_name"),
-            "media_url": absolutize(request, item, "media_url").get("media_url"),
+            **{
+                field: value
+                for field, value in (present_media(request, item) or {}).items()
+                if field in ("media_url", "preview_url")
+            },
         }
         for key, item in covers.items()
     }
@@ -1352,7 +1402,7 @@ def get_gallery_photos(
         for media in serialize_many(page(cursor, offset, limit - len(items))):
             if len(items) >= limit:
                 break
-            media = absolutize(request, media, "media_url")
+            media = present_media(request, media)
             media["event"] = {
                 "id": item["id"],
                 "event_name": item.get("event_name"),
@@ -2249,6 +2299,13 @@ def get_teacher_events(
     limit: int | None = Query(default=None, ge=1, le=1000),
     dashboard: bool = Query(default=False),
     reminders: bool = Query(default=False),
+    # My Events: one filtered page with tab counts (see own_events_page).
+    paged: bool = Query(default=False),
+    q: str | None = Query(default=None, max_length=200),
+    tab: str | None = Query(default=None, alias="status", max_length=20),
+    event_type: str | None = Query(default=None, max_length=80),
+    start_date: str | None = Query(default=None, max_length=10),
+    end_date: str | None = Query(default=None, max_length=10),
 ):
     user = get_current_user(authorization)
     require_role(user, "teacher")
@@ -2256,6 +2313,11 @@ def get_teacher_events(
     scope = {"teacher_id": user["id"], "archived_at": None}
     if dashboard:
         return dashboard_events(events, scope)
+    if paged:
+        return own_events_page(
+            events, scope, tab=tab, q=q, event_type=event_type,
+            start_date=start_date, end_date=end_date, skip=skip, limit=limit or 25,
+        )
     if reminders:
         # The reminder engine only uses today/tomorrow, excluding draft and
         # rejected events. Preserve description metadata for its time label.
@@ -2286,6 +2348,160 @@ def get_teacher_events(
         "skip": skip or 0,
         "limit": limit,
     }
+
+
+# ============================================================
+# MY EVENTS: ONE PAGE, FILTERED ON THE SERVER
+#
+# Teachers and the Event Manager list their own events a page at a time,
+# with the same tabs, search, type and date filters the page shows -- rather
+# than downloading every event to filter it in the browser.
+# ============================================================
+
+# My Events' tabs, as the page groups statuses (components/teacher/status.js).
+OWN_EVENT_TABS = {
+    "draft": ("draft",),
+    "pending": ("pending", "submitted", "under_review"),
+    "approved": ("approved", "in_progress", "completed", "published"),
+    "rejected": ("rejected", "revoked"),
+    "recorded": ("recorded",),
+}
+
+
+def own_events_query(
+    scope: dict,
+    *,
+    q: str | None = None,
+    event_type: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    """The owner's events under every filter but the tab."""
+    query = dict(scope)
+    text = (q or "").strip()
+    if text:
+        # The department is kept in the description's metadata, so searching
+        # the description finds it too.
+        pattern = {"$regex": re.escape(text), "$options": "i"}
+        query["$or"] = [{"event_name": pattern}, {"location": pattern}, {"description": pattern}]
+    if (event_type or "").strip():
+        query["event_type"] = event_type.strip()
+    span = {}
+    for key, value in (("$gte", start_date), ("$lte", end_date)):
+        if value:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dates must use the YYYY-MM-DD format.") from None
+            span[key] = value
+    if span:
+        query["event_date"] = span
+    return query
+
+
+def own_events_page(
+    collection,
+    scope: dict,
+    *,
+    tab: str | None,
+    q: str | None,
+    event_type: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    skip: int | None,
+    limit: int | None,
+) -> dict:
+    """One page of the owner's events, newest first, with the count for every
+    tab under the other filters and the event types they have used."""
+    wanted = (tab or "all").strip().lower()
+    if wanted != "all" and wanted not in OWN_EVENT_TABS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown status filter.")
+    base = own_events_query(scope, q=q, event_type=event_type, start_date=start_date, end_date=end_date)
+    query = base if wanted == "all" else {**base, "status": {"$in": list(OWN_EVENT_TABS[wanted])}}
+
+    event_list, total = paginate(collection, query, "created_at", DESCENDING, skip, limit)
+    many_with_legacy_metadata(event_list)
+
+    counts = {key: collection.count_documents({**base, "status": {"$in": list(statuses)}}) for key, statuses in OWN_EVENT_TABS.items()}
+    counts["all"] = collection.count_documents(base)
+    event_types = sorted(
+        {str(row.get("event_type") or "").strip() for row in collection.find(scope, {"event_type": 1})} - {""},
+        key=str.casefold,
+    )
+    return {
+        "success": True,
+        "events": event_list,
+        "total": total,
+        "count": len(event_list),
+        "has_more": (skip or 0) + len(event_list) < total,
+        "skip": skip or 0,
+        "limit": limit,
+        "counts": counts,
+        # Every event the owner has, whatever the filters ("12 of 340").
+        "grand_total": collection.count_documents(scope),
+        "event_types": event_types,
+    }
+
+
+def own_events_filtered_workbook(collection, query: dict, owner: dict) -> bytes:
+    """My Events under its filters, as one Excel sheet (newest first)."""
+    event_list = serialize_many(collection.find(query).sort("created_at", DESCENDING))
+    many_with_legacy_metadata(event_list)
+    for event in event_list:
+        event["teacher_name"] = owner.get("name")
+        event["teacher_email"] = owner.get("email")
+    count = len(event_list)
+    return build_workbook(
+        "My events", EVENT_HEADERS, event_rows(event_list),
+        note=f"{count} event{'s' if count != 1 else ''} · as filtered on My Events",
+    )
+
+
+def own_events_workbook(collection, scope: dict, event_ids: list[str], owner: dict) -> bytes:
+    """My Events as filtered on screen (the page filters in the browser, so it
+    sends the ids it shows), kept to the caller's own events, in that order."""
+    wanted = [oid for oid in (to_object_id(value) for value in dict.fromkeys(event_ids)) if oid is not None]
+    found = {str(doc["_id"]): doc for doc in collection.find({**scope, "_id": {"$in": wanted}})}
+    event_list = serialize_many(found[str(oid)] for oid in wanted if str(oid) in found)
+    many_with_legacy_metadata(event_list)
+    for event in event_list:
+        event["teacher_name"] = owner.get("name")
+        event["teacher_email"] = owner.get("email")
+    count = len(event_list)
+    return build_workbook(
+        "My events", EVENT_HEADERS, event_rows(event_list),
+        note=f"{count} event{'s' if count != 1 else ''} · as filtered on My Events",
+    )
+
+
+@router.get("/teacher/events/export.xlsx")
+def export_teacher_events_filtered(
+    authorization: str | None = Header(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    tab: str | None = Query(default=None, alias="status", max_length=20),
+    event_type: str | None = Query(default=None, max_length=80),
+    start_date: str | None = Query(default=None, max_length=10),
+    end_date: str | None = Query(default=None, max_length=10),
+):
+    """My Events under its filters, every page of it, as Excel."""
+    user = get_current_user(authorization)
+    require_role(user, "teacher")
+    query = own_events_query(
+        {"teacher_id": user["id"], "archived_at": None},
+        q=q, event_type=event_type, start_date=start_date, end_date=end_date,
+    )
+    wanted = (tab or "all").strip().lower()
+    if wanted in OWN_EVENT_TABS:
+        query["status"] = {"$in": list(OWN_EVENT_TABS[wanted])}
+    return xlsx_response(own_events_filtered_workbook(events, query, user), stamped("my-events"))
+
+
+@router.post("/teacher/events/export.xlsx")
+def export_teacher_events(payload: EventExportRequest, authorization: str | None = Header(default=None)):
+    user = get_current_user(authorization)
+    require_role(user, "teacher")
+    content = own_events_workbook(events, {"teacher_id": user["id"]}, payload.event_ids, user)
+    return xlsx_response(content, stamped("my-events"))
 
 
 @router.post(
@@ -3036,6 +3252,8 @@ def upload_teacher_event_media(
             event_id=event_key,
             teacher_id=user["id"],
         )
+        # Made while the original is still at hand; stored once the record is.
+        preview = build_preview(buffer) if is_image else None
     finally:
         buffer.close()
 
@@ -3055,11 +3273,13 @@ def upload_teacher_event_media(
     _record_upload(
         event_media, document, stored, event, cap_query, cap, media_type, cap_bytes
     )
+    if preview:
+        attach_preview(event_media, document, event_id=event_key, owner_id=user["id"], data=preview)
 
     return {
         "success": True,
         "message": "Media uploaded successfully",
-        "media": absolutize(request, serialize(document), "media_url"),
+        "media": present_media(request, serialize(document)),
     }
 
 
@@ -3314,7 +3534,7 @@ def _direct_upload_response(request: Request, document: dict) -> dict:
     return {
         "success": True,
         "message": "Media uploaded successfully",
-        "media": absolutize(request, serialize(document), "media_url"),
+        "media": present_media(request, serialize(document)),
     }
 
 
@@ -3398,6 +3618,7 @@ def complete_teacher_direct_upload(
     event_id: str,
     session_id: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(
         default=None
     ),
@@ -3432,6 +3653,12 @@ def complete_teacher_direct_upload(
         direct_upload.finish(session, direct_upload.FAILED)
         raise
     direct_upload.finish(session, direct_upload.COMPLETED, record_id=document["_id"])
+    # The photo went straight to storage, so its preview is made from there
+    # -- after the response, so the browser does not wait for the read-back.
+    if media_type == "image":
+        background_tasks.add_task(
+            attach_preview, collection, dict(document), event_id=str(event["_id"]), owner_id=user["id"]
+        )
 
     return _direct_upload_response(request, document)
 

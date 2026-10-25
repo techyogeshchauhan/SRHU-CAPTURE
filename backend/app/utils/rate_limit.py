@@ -2,12 +2,12 @@
 
 State is per process: with several workers or replicas each keeps its own
 counters, so the effective limit is multiplied by their number. That is fine
-for throttling brute force and inbox flooding on a single Railway instance;
+for throttling brute force and inbox flooding on a single server process;
 a shared store (Redis) would be needed for anything stricter.
 
 Client IPs come from ``request.client.host``. ``run.py`` starts uvicorn with
-proxy headers trusted, so behind Railway's proxy this is the real client
-address taken from X-Forwarded-For.
+proxy headers trusted, so behind the reverse proxy (nginx) this is the real
+client address taken from X-Forwarded-For.
 """
 
 from __future__ import annotations

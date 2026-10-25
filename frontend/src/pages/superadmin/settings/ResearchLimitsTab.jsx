@@ -1,11 +1,12 @@
 import NumberLimitField from "../../../components/superadmin/settings/NumberLimitField";
-import RequirementToggle from "../../../components/superadmin/settings/RequirementToggle";
 import SettingsCard from "../../../components/superadmin/settings/SettingsCard";
 import { IconAward } from "../../../components/teacher/icons";
 
 /**
  * Evidence behind one research record: the paper, certificates, grant
- * letters. Budgeted like documents -- a count and a combined size.
+ * letters. Budgeted like documents -- a count and a combined size. The
+ * research forms no longer take uploads, so evidence is never mandatory and
+ * there is no switch for it.
  */
 export default function ResearchLimitsTab({ values, bounds, errors, disabled, onChange }) {
   const field = (name, props) => (
@@ -29,16 +30,8 @@ export default function ResearchLimitsTab({ values, bounds, errors, disabled, on
         eyebrow="Research portfolio"
         title="Research evidence limits"
         chip="PDF, JPG, PNG, WEBP"
-        description="The files that back one research record — the paper, a certificate, a sanction letter. Optional unless the switch below makes them mandatory, for Event Managers and teachers alike."
+        description="The research forms no longer take file uploads. These limits apply only to evidence attached to older records."
       >
-        <RequirementToggle
-          id="research-evidence-required"
-          noun="evidence file"
-          subject="research record"
-          value={Boolean(values.research_evidence_required)}
-          disabled={disabled}
-          onChange={(on) => onChange("research_evidence_required", on)}
-        />
 
         {field("max_research_evidence_files", {
           label: "Max evidence files per record",

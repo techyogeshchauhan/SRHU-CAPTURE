@@ -129,7 +129,7 @@ app = FastAPI(
 # ============================================================
 
 @app.exception_handler(413)
-async def request_entity_too_large(_request: Request, _exc: Exception):
+async def request_entity_too_large(_request: Request, exc: Exception):
     """Return a JSON 413 instead of an HTML page.
 
     uvicorn / h11 can reject an oversized body before it even reaches the
@@ -142,7 +142,13 @@ async def request_entity_too_large(_request: Request, _exc: Exception):
     JSON. The Cloudflare case still cannot be caught here (the response
     never reaches the app), but it is handled in the frontend by inspecting
     xhr.status before falling back to the generic error message.
+
+    A route's own 413 ("Photos must be smaller than 1 MB") keeps its message:
+    it names the limit, which the generic text does not.
     """
+    detail = getattr(exc, "detail", None)
+    if isinstance(detail, str) and detail and detail != "Request Entity Too Large":
+        return JSONResponse(status_code=413, content={"detail": detail}, headers=getattr(exc, "headers", None))
     return JSONResponse(
         status_code=413,
         content={"detail": "The uploaded file is too large for this server. Please check the file size limits."},
@@ -258,7 +264,7 @@ def root():
 
 @app.get("/health")
 def health_check():
-    """Unauthenticated liveness probe (Railway's healthcheck path).
+    """Unauthenticated liveness probe, for a load balancer or uptime monitor.
 
     Returns only "ok" or "degraded" -- always with HTTP 200 so a database blip
     does not make the platform restart the service. The reasons (database

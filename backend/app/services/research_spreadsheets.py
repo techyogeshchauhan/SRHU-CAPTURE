@@ -26,6 +26,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from app.config import settings
+from app.services.excel_export import as_text_only
 from app.services.research_categories import CATEGORIES, Category, indexing_text, outcome_label
 
 # Every researcher belongs to the one school the platform serves. NAAC's
@@ -102,7 +103,17 @@ def _person(people: dict, faculty_id) -> dict:
     return people.get(str(faculty_id or "")) or {}
 
 
+def _authors(people: dict, record: dict) -> str:
+    """The record's faculty member, then its SRHU co-authors."""
+    first = record.get("faculty_id")
+    ids = dict.fromkeys(str(fid) for fid in [first, *(record.get("co_faculty_ids") or [])] if fid)
+    return ", ".join(name for name in (_person(people, fid).get("name") for fid in ids) if name)
+
+
 def _save(workbook: Workbook) -> bytes:
+    # A title typed as =... is text, never a formula run on whoever opens it.
+    for sheet in workbook.worksheets:
+        as_text_only(sheet)
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -146,16 +157,15 @@ def export_records(records: list[dict], people: dict, *, heading: str) -> bytes:
             continue
         sheet = workbook.create_sheet(_sheet_name(category.label))
         sheet.append([
-            "Faculty member", category.title_label, category.date_label, "Academic year",
+            "Faculty member(s)", category.title_label, category.date_label, "Academic year",
             "Status", "Verification",
             *[field.label for field in category.fields],
-            "Link", "Abstract", "Evidence files", "Entered by", "Verified on",
+            "Link", "Evidence files", "Entered by", "Verified on",
         ])
         for record in rows:
-            person = _person(people, record.get("faculty_id"))
             details = record.get("details") or {}
             sheet.append([
-                person.get("name"),
+                _authors(people, record),
                 record.get("title"),
                 _to_date(record.get("record_date")),
                 record.get("academic_year"),
@@ -163,7 +173,6 @@ def export_records(records: list[dict], people: dict, *, heading: str) -> bytes:
                 VERIFICATION_LABEL.get(record.get("verification_status"), record.get("verification_status")),
                 *[_cell(details.get(field.key), field.type) for field in category.fields],
                 record.get("link"),
-                record.get("abstract"),
                 len(record.get("evidence") or []),
                 record.get("created_by_name"),
                 _iso(record.get("verified_at")) if record.get("verification_status") == "verified" else None,
@@ -207,10 +216,15 @@ def export_naac(records: list[dict], people: dict, *, period: str) -> bytes:
         return sorted(found, key=lambda r: r.get("record_date") or "")
 
     def teacher(record: dict) -> str:
-        return _person(people, record.get("faculty_id")).get("name") or ""
+        return _authors(people, record)
 
     def d(record: dict, key: str):
         return (record.get("details") or {}).get(key)
+
+    def chosen(record: dict, key: str):
+        """A choice, or the text typed in for "Other"."""
+        value = d(record, key)
+        return (d(record, f"{key}_other") or value) if value == "Other" else value
 
     journals = by("journal")
     _naac_sheet(
@@ -239,24 +253,39 @@ def export_naac(records: list[dict], people: dict, *, period: str) -> bytes:
     _naac_sheet(
         workbook, "Conference papers", f"Papers in conferences and their proceedings — {period}",
         ["Name of the teacher", "Title of the paper", "Name of the conference", "Organised by",
-         "National / International", "Type", "Date", "Title of the proceedings", "ISBN / ISSN", "DOI"],
+         "National / International", "Type", "Mode", "Date", "Title of the proceedings", "ISBN / ISSN", "DOI"],
         [[
             teacher(r), r.get("title"), d(r, "conference"), d(r, "organiser"), d(r, "level"),
-            d(r, "presentation_type"), _to_date(r.get("record_date")), d(r, "proceedings"), d(r, "isbn"), d(r, "doi"),
+            chosen(r, "presentation_type"), d(r, "mode"), _to_date(r.get("record_date")), d(r, "proceedings"),
+            d(r, "isbn"), d(r, "doi"),
         ] for r in conferences],
     )
 
     patents = by("patent")
     patent_category = CATEGORIES["patent"]
     _naac_sheet(
-        workbook, "Patents", f"Patents filed, published and awarded — {period}",
-        ["Name of the teacher", "Title of the patent", "Patent office", "Application number", "Status",
+        workbook, "Patents and IPR", f"Patents and other IPR filed, published and awarded — {period}",
+        ["Name of the inventor", "Title", "IPR type", "Patent office", "Application number", "Status",
          "Date of filing", "Date of publication", "Date of award", "Patent number"],
         [[
-            teacher(r), r.get("title"), d(r, "office"), d(r, "application_number"),
+            teacher(r), r.get("title"), chosen(r, "ipr_type"), d(r, "office"), d(r, "application_number"),
             outcome_label(patent_category, r.get("outcome_status")), _to_date(r.get("record_date")),
             _to_date(d(r, "publication_date")), _to_date(d(r, "grant_date")), d(r, "patent_number"),
         ] for r in patents],
+    )
+
+    projects = by("funded_project")
+    project_category = CATEGORIES["funded_project"]
+    _naac_sheet(
+        workbook, "Funded projects", f"Intramural and extramural funded research projects — {period}",
+        ["Name of the teacher", "Role", "Title of the project", "Intramural / Extramural", "Funding agency",
+         "Amount sanctioned (INR)", "Start date", "End date", "Status"],
+        [[
+            teacher(r), d(r, "role"), r.get("title"), d(r, "funding_type"),
+            d(r, "funding_agency") or (SCHOOL if d(r, "funding_type") == "Intramural" else None),
+            d(r, "amount"), _to_date(r.get("record_date")), _to_date(d(r, "end_date")),
+            outcome_label(project_category, r.get("outcome_status")),
+        ] for r in projects],
     )
 
     others = by("other")
@@ -265,7 +294,7 @@ def export_naac(records: list[dict], people: dict, *, period: str) -> bytes:
         ["Name of the teacher", "Kind", "Title of the award / activity", "Awarding agency / organisation",
          "Level", "Date"],
         [[
-            teacher(r), d(r, "kind"), r.get("title"), d(r, "awarded_by"), d(r, "level"),
+            teacher(r), chosen(r, "kind"), r.get("title"), d(r, "awarded_by"), d(r, "level"),
             _to_date(r.get("record_date")),
         ] for r in others],
     )
@@ -290,7 +319,7 @@ def _headers(category: Category) -> list[tuple[str, str]]:
         elif item.type == "date":
             label += " (YYYY-MM-DD)"
         columns.append((label, f"details.{item.key}"))
-    columns += [("Link", "link"), ("Abstract", "abstract")]
+    columns.append(("Link", "link"))
     return columns
 
 
@@ -433,7 +462,6 @@ def parse_import(content: bytes) -> list[dict]:
                 "outcome_status": _plain(cells.get("outcome_status")),
                 "details": details,
                 "link": _plain(cells.get("link")),
-                "abstract": _plain(cells.get("abstract")),
             })
             if len(rows) > MAX_IMPORT_ROWS:
                 raise ImportFileError(f"A file can hold at most {MAX_IMPORT_ROWS} records. Split it into smaller files.")

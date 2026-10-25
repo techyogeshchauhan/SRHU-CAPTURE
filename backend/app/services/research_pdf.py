@@ -71,6 +71,12 @@ def _year(iso: str | None) -> str:
     return (iso or "")[:4]
 
 
+def _chosen(d: dict, key: str) -> str | None:
+    """A choice, or the text typed in for "Other"."""
+    value = d.get(key)
+    return (d.get(f"{key}_other") or value) if value == "Other" else value
+
+
 def citation(record: dict, category: Category | None) -> str:
     """One record as Paragraph markup, in its category's citation form."""
     d = record.get("details") or {}
@@ -99,15 +105,16 @@ def citation(record: dict, category: Category | None) -> str:
     elif key == "conference":
         parts = [
             f"{rich(d.get('authors'))}. <b>{title}</b>.",
-            f"{escape(d.get('presentation_type') or 'Presented')} at <i>{rich(d.get('conference'))}</i>",
+            f"{escape(_chosen(d, 'presentation_type') or 'Presented')} at <i>{rich(d.get('conference'))}</i>",
             f"{rich(d.get('organiser'))}{', ' + rich(d.get('venue')) if d.get('venue') else ''}, {escape(when)}"
-            f" ({escape(d.get('level') or '')}).",
+            f" ({escape(', '.join(x for x in (d.get('level'), d.get('mode')) if x))}).",
         ]
         if d.get("proceedings"):
             parts.append(f"In <i>{rich(d['proceedings'])}</i>{', ISBN/ISSN ' + escape(str(d['isbn'])) if d.get('isbn') else ''}.")
     elif key == "patent":
         parts = [
-            f"<b>{title}</b>. Inventors: {rich(d.get('inventors'))}.",
+            f"<b>{title}</b>{' (' + escape(_chosen(d, 'ipr_type')) + ')' if d.get('ipr_type') else ''}."
+            f" Inventors: {rich(d.get('inventors'))}.",
             f"{escape(d.get('office') or '')}, application no. {escape(str(d.get('application_number') or '—'))},"
             f" filed {escape(when)}.",
             f"Status: <b>{escape(status)}</b>",
@@ -125,6 +132,16 @@ def citation(record: dict, category: Category | None) -> str:
             f"<b>{title}</b>.",
             f"Role: {escape(d.get('role') or 'Not specified')}. {span}. Status: {escape(status)}.",
         ]
+    elif key == "funded_project":
+        span = escape(when) + (f" to {escape(format_date(d['end_date']))}" if d.get("end_date") else "")
+        funding = escape(d.get("funding_type") or "Funded")
+        if d.get("funding_agency"):
+            funding += f", {rich(d['funding_agency'])}"
+        amount = f" INR {d['amount']:,}" if isinstance(d.get("amount"), (int, float)) else ""
+        parts = [
+            f"<b>{title}</b>.",
+            f"{funding}{escape(amount)}. Role: {escape(d.get('role') or 'Not specified')}. {span}. Status: {escape(status)}.",
+        ]
     elif key == "book":
         if d.get("book_type") == "Book chapter":
             parts = [f"{rich(d.get('authors'))} ({year}). <b>{title}</b>. In <i>{rich(d.get('book_title'))}</i>."]
@@ -133,7 +150,7 @@ def citation(record: dict, category: Category | None) -> str:
         parts.append(f"{rich(d.get('publisher'))}{'. ISBN ' + escape(str(d['isbn'])) if d.get('isbn') else ''}.")
     else:
         parts = [
-            f"<b>{title}</b> — {escape(d.get('kind') or 'Achievement')}.",
+            f"<b>{title}</b> — {escape(_chosen(d, 'kind') or 'Achievement')}.",
             f"{rich(d.get('awarded_by'))}{', ' + escape(d['level']) + ' level' if d.get('level') else ''}, {escape(when)}.",
         ]
         if d.get("description"):

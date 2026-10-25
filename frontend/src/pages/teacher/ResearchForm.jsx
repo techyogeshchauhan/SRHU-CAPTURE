@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import Combobox from "../../components/common/Combobox";
 import DateInputDMY from "../../components/common/DateInputDMY";
 import PageHero from "../../components/teacher/PageHero";
+import Modal from "../../components/teacher/Modal";
 import TeacherShell from "../../components/teacher/TeacherShell";
 import { usePanel } from "../../components/teacher/panel";
 import { trackOf } from "../../components/teacher/status";
@@ -14,10 +15,10 @@ import {
   IconSave,
   IconSearch,
   IconUserPlus,
+  IconX,
 } from "../../components/teacher/icons";
 import { DuplicateNotice } from "../../components/research/ResearchNotices";
 import AddFacultyModal from "../../components/research/AddFacultyModal";
-import EvidenceQueue from "../../components/research/EvidenceQueue";
 import CategoryIcon from "../../components/research/CategoryIcon";
 import useShellProfile from "../../components/research/useShellProfile";
 import useResearchCategories from "../../hooks/useResearchCategories";
@@ -27,17 +28,15 @@ import {
   createResearch,
   getResearch,
   lookupDoi,
-  removeEvidence,
   searchFaculty,
   submitResearch,
   updateResearch,
-  uploadEvidence,
 } from "../../services/research";
 import { dmyProblem } from "../../utils/dates";
 import { authorIndex, compactDetails, emptyDetails, isFieldRequired, isFieldShown } from "../../utils/research";
 import MultiSelectDropdown from "../../components/common/MultiSelectDropdown";
 
-const EMPTY = { title: "", record_date: "", outcome_status: "", link: "", abstract: "" };
+const EMPTY = { title: "", record_date: "", outcome_status: "", link: "" };
 
 /**
  * Add or edit a research record. Both authoring panels:
@@ -46,8 +45,8 @@ const EMPTY = { title: "", record_date: "", outcome_status: "", link: "", abstra
  * - A teacher always records their own.
  *
  * The form is drawn from the category's definition on the server. A record
- * is saved as a draft; evidence is attached and the record submitted from
- * its own page. Required fields are marked but only enforced on submission,
+ * is saved as a draft and submitted from here or from its own page. Research
+ * takes no file uploads. Required fields are marked but only enforced on submission,
  * so a half-known record can be saved and finished later.
  */
 // Crossref describes books too, but a book record keeps no DOI: its box only
@@ -65,15 +64,19 @@ export default function ResearchForm() {
   const panel = usePanel();
   const manager = panel.role === "event_manager";
   const { profile, logout } = useShellProfile();
-  const { categories, byKey, limits, loading: categoriesLoading, error: categoriesError } = useResearchCategories();
+  const { categories, byKey, loading: categoriesLoading, error: categoriesError } = useResearchCategories();
 
   const [record, setRecord] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [categoryKey, setCategoryKey] = useState("");
-  const [formStep, setFormStep] = useState("package");
+  // A change of research type that would clear details already typed in,
+  // waiting for the author to confirm it.
+  const [pendingType, setPendingType] = useState("");
   const [form, setForm] = useState(EMPTY);
   const [details, setDetails] = useState({});
   const [faculty, setFaculty] = useState(null);
+  // The other SRHU teachers who are authors of the same work (Event Manager).
+  const [coFaculty, setCoFaculty] = useState([]);
   const [facultyText, setFacultyText] = useState("");
   const [facultyOptions, setFacultyOptions] = useState([]);
   const [facultyLoading, setFacultyLoading] = useState(false);
@@ -86,22 +89,39 @@ export default function ResearchForm() {
   // The paper's full author list from the last DOI look-up, to check the
   // faculty member is on it.
   const [doiAuthors, setDoiAuthors] = useState(null);
-  // The abstract the last DOI filled in: a later DOI replaces it (or clears
-  // it, when Crossref has none), but never an abstract the author wrote.
-  const doiAbstract = useRef("");
   const [duplicates, setDuplicates] = useState([]);
   const [addingFaculty, setAddingFaculty] = useState(false);
   // What is typed in each date box (keyed by input id), so text that is not
   // a date is reported instead of being saved as a blank date.
   const [dateText, setDateText] = useState({});
   const [showMissing, setShowMissing] = useState(fillMode);
-  // Evidence: files already on the record (editing), and new ones chosen in
-  // this form, uploaded when it is saved.
-  const [existingEvidence, setExistingEvidence] = useState([]);
-  const [queued, setQueued] = useState([]);
   const [facultyNotice, setFacultyNotice] = useState("");
 
   const category = byKey[categoryKey] || null;
+  // What the category calls the person: "Author name", "Name of inventor".
+  const personLabel = category?.person_label || "Faculty name";
+  const addAnother = {
+    "Author name": "Add another author",
+    "Name of inventor": "Add another inventor",
+  }[personLabel] || "Add another faculty member";
+  const authors = faculty ? [faculty, ...coFaculty] : coFaculty;
+
+  // The first teacher chosen is the one the record belongs to; everyone after
+  // is a co-author, and the record shows in each one's research too.
+  const addAuthor = (person) => {
+    setFacultyError("");
+    setFacultyText("");
+    if (!faculty) setFaculty(person);
+    else if (person.id !== faculty.id && !coFaculty.some((p) => p.id === person.id)) setCoFaculty((prev) => [...prev, person]);
+  };
+  const removeAuthor = (person) => {
+    if (person.id === faculty?.id) {
+      setFaculty(coFaculty[0] || null);
+      setCoFaculty(coFaculty.slice(1));
+    } else {
+      setCoFaculty((prev) => prev.filter((p) => p.id !== person.id));
+    }
+  };
   // Whose research this is: the teacher picked by the Event Manager, or the
   // teacher signed in.
   const ownerName = manager ? faculty?.name : profile?.name;
@@ -121,11 +141,10 @@ export default function ResearchForm() {
           record_date: loaded.record_date || "",
           outcome_status: loaded.outcome_status || "",
           link: loaded.link || "",
-          abstract: loaded.abstract || "",
         });
         setDetails(loaded.details || {});
         setFaculty(loaded.faculty || null);
-        setExistingEvidence(loaded.evidence || []);
+        setCoFaculty(loaded.co_faculty || []);
       })
       .catch((err) => live && setLoadError(err?.message || "This record could not be loaded."));
     return () => {
@@ -142,10 +161,19 @@ export default function ResearchForm() {
     setError("");
   };
 
+  // Another research type has other fields, so what was typed into this
+  // one's is lost: asked first, never silently. Title, date and link stay.
+  const detailsTyped = Object.values(compactDetails(details)).length > 0;
+  const pickType = (key) => {
+    if (key === categoryKey) return;
+    if (category && detailsTyped) setPendingType(key);
+    else chooseCategory(key);
+  };
+
   // ---------------------------------------------------------- faculty search
   const searchRef = useRef(null);
   useEffect(() => {
-    if (!manager || editing) return undefined;
+    if (!manager) return undefined;
     searchRef.current?.abort();
     const controller = new AbortController();
     searchRef.current = controller;
@@ -162,7 +190,7 @@ export default function ResearchForm() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [facultyText, manager, editing]);
+  }, [facultyText, manager]);
 
   // ---------------------------------------------------------- DOI
   // Crossref suggests; the author checks every field before saving.
@@ -185,9 +213,8 @@ export default function ResearchForm() {
       Object.assign(next, suggestion.details);
       const authors = suggestion.author_names || [];
       if ("author_position" in blank && !next.author_position && authorIndex(ownerName, authors) === 0) {
-        next.author_position = "First author";
+        next.author_position = "First author / Corresponding author";
       }
-      const lastDoiAbstract = doiAbstract.current;
       setCategoryKey(target.key);
       setForm((prev) => ({
         ...prev,
@@ -196,9 +223,7 @@ export default function ResearchForm() {
         outcome_status:
           suggestion.outcome_status || (sameCategory && prev.outcome_status) || target.outcomes[0]?.key || "",
         link: suggestion.link || prev.link,
-        abstract: suggestion.abstract || (prev.abstract === lastDoiAbstract ? "" : prev.abstract),
       }));
-      doiAbstract.current = suggestion.abstract || "";
       setDetails(next);
       setDoiAuthors(authors);
       const toFill = target.fields
@@ -304,36 +329,10 @@ export default function ResearchForm() {
     if (first) requestAnimationFrame(() => goTo(first.id));
   });
 
-  // Research evidence is optional for Event Manager submissions. Teachers
-  // keep the configurable evidence requirement.
-  const evidenceRequired = !manager && Boolean(limits?.evidence_required);
   // Recording / submitting from the form: new records, and any record whose
   // page would offer it (a draft, or one sent back).
   const canSubmitHere = !editing || Boolean(record?.permissions?.can_submit);
   const submitLabel = manager ? "Save & record" : "Save & submit for verification";
-
-  const dropExisting = async (entry) => {
-    const body = await removeEvidence(recordId, entry.id);
-    setRecord(body.record);
-    setExistingEvidence(body.record.evidence || []);
-  };
-
-  const uploadQueued = async (id) => {
-    const failed = [];
-    for (const item of queued) {
-      if (item.status === "done") continue;
-      setQueued((prev) => prev.map((q) => (q.key === item.key ? { ...q, status: "uploading", error: "" } : q)));
-      try {
-        await uploadEvidence(id, item.file, item.tag);
-        setQueued((prev) => prev.map((q) => (q.key === item.key ? { ...q, status: "done" } : q)));
-      } catch (err) {
-        const message = err?.message || "could not be uploaded";
-        failed.push(`${item.file.name}: ${message}`);
-        setQueued((prev) => prev.map((q) => (q.key === item.key ? { ...q, status: "error", error: message } : q)));
-      }
-    }
-    return failed;
-  };
 
   const save = (event) => {
     event.preventDefault();
@@ -369,11 +368,6 @@ export default function ResearchForm() {
         goTo(missingNow[0].id);
         return;
       }
-      if (evidenceRequired && existingEvidence.length + queued.length === 0) {
-        setError(`Attach at least one evidence file to ${verb} — the Admin has made evidence mandatory.`);
-        document.getElementById("form-evidence")?.scrollIntoView({ behavior: "smooth", block: "center" });
-        return;
-      }
     }
 
     const body = {
@@ -381,20 +375,27 @@ export default function ResearchForm() {
       record_date: form.record_date || null,
       outcome_status: form.outcome_status || undefined,
       link: form.link || null,
-      abstract: form.abstract || null,
       details: compactDetails(details),
     };
+    // An older record may hold a status its category no longer offers (a
+    // journal paper still "accepted"): it is left as it is.
+    if (!category.outcomes.some((outcome) => outcome.key === body.outcome_status)) delete body.outcome_status;
 
     setSaving(true);
     let saved;
     try {
       if (editing) {
-        ({ record: saved } = await updateResearch(recordId, { ...body, expected_updated_at: record?.updated_at }));
+        ({ record: saved } = await updateResearch(recordId, {
+          ...body,
+          co_faculty_ids: manager ? coFaculty.map((p) => p.id) : undefined,
+          expected_updated_at: record?.updated_at,
+        }));
       } else {
         ({ record: saved } = await createResearch({
           ...body,
           category: category.key,
           faculty_id: manager ? faculty.id : undefined,
+          co_faculty_ids: manager ? coFaculty.map((p) => p.id) : undefined,
         }));
       }
     } catch (err) {
@@ -404,10 +405,9 @@ export default function ResearchForm() {
     }
 
     // The record exists now; whatever happens next is reported on its page.
-    const failed = await uploadQueued(saved.id);
     let notice = editing ? "saved" : "created";
     let submitError = "";
-    if (andSubmit && failed.length === 0) {
+    if (andSubmit) {
       try {
         const done = await submitResearch(saved.id);
         notice = done.record?.recorded_by_manager ? "recorded" : "submitted";
@@ -417,7 +417,7 @@ export default function ResearchForm() {
     }
     navigate(`${panel.base}/research/${saved.id}`, {
       replace: true,
-      state: { notice, failed, submitError },
+      state: { notice, submitError },
     });
   };
 
@@ -500,25 +500,19 @@ export default function ResearchForm() {
               <IconArrowLeft />
               {editing ? "Back to the record" : "Back to research"}
             </Link>
-            {!editing && formStep === "details" && (
-              <button type="button" onClick={() => setFormStep("package")} className={`btn btn-ghost ${manager ? "btn-xs" : "btn-sm"}`}>
-                <IconArrowLeft />
-                Back to packages
-              </button>
-            )}
           </div>
         </div>
 
         <PageHero
           compact
           eyebrow={editing ? (record && !category ? "Legacy record" : "Edit research record") : "Add research"}
-          title={editing ? form.title || "Research record" : category && formStep === "details" ? category.label : "What are you recording?"}
+          title={editing ? form.title || "Research record" : category ? category.label : "Add research"}
           subtitle={
             editing
               ? category?.label || record?.category_label
               : manager
                 ? undefined
-                : "Saved as a draft. Attach the evidence and send it to the Dean from the record's page."
+                : "Saved as a draft. Send it to the Dean from here or from the record's page."
           }
         />
 
@@ -559,54 +553,43 @@ export default function ResearchForm() {
               </div>
             )}
 
-            {/* ------------------------------------------------ category */}
-            {!editing && formStep === "package" && (
+            {/* ------------------------------------------------ research type */}
+            {!editing && (
               <section className="glass p-5 sm:p-6">
-                <h2 className="h3 text-base text-ink">
-                  Choose a research package<span className="req">*</span>
-                </h2>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3" role="radiogroup" aria-label="Research package">
-                  {categories.map((option) => {
-                    const selected = option.key === categoryKey;
-                    return (
-                      <button
-                        key={option.key}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() => chooseCategory(option.key)}
-                        className={`flex items-start gap-3 rounded-xl border p-4 text-left transition ${
-                          selected ? "border-accent bg-accent/10 ring-2 ring-accent/25" : "hairline hover:border-accent/40 hover:bg-accent/5"
-                        }`}
-                      >
-                        <span className="icon-tile h-10 w-10 shrink-0 rounded-xl">
-                          <CategoryIcon category={option.key} />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-2 font-semibold text-ink">
-                            {option.label}
-                            {selected && <IconCheck className="h-4 w-4 text-accent" />}
-                          </span>
-                          <span className="prose-muted mt-0.5 block text-xs">{option.description}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
+                <div className="field max-w-xl">
+                  <label htmlFor="research-type">
+                    Select research type<span className="req">*</span>
+                  </label>
+                  <div className="flex items-center gap-3">
+                    {category && (
+                      <span className="icon-tile h-10 w-10 shrink-0 rounded-xl" aria-hidden="true">
+                        <CategoryIcon category={category.key} />
+                      </span>
+                    )}
+                    <select
+                      id="research-type"
+                      value={categoryKey}
+                      onChange={(e) => pickType(e.target.value)}
+                      className={`input min-w-0 flex-1 ${categoryKey ? "" : "is-placeholder"}`}
+                    >
+                      <option value="" disabled>
+                        Choose what you are recording…
+                      </option>
+                      {categories.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="field-hint mt-1">
+                    {category ? category.description : "The form for that kind of research opens below."}
+                  </p>
                 </div>
               </section>
             )}
 
-            {!editing && formStep === "package" && (
-              <div className="flex flex-wrap items-center justify-end gap-3">
-                <Link to={backTo} className="btn btn-ghost">Cancel</Link>
-                <button type="button" onClick={() => setFormStep("details")} disabled={!category} className="btn btn-primary">
-                  Next
-                  <IconArrowLeft className="rotate-180" />
-                </button>
-              </div>
-            )}
-
-            {category && (editing || formStep === "details") && (
+            {category && (
               <>
                 {/* ------------------------------------------------ whose */}
                 {manager && (
@@ -615,58 +598,69 @@ export default function ResearchForm() {
                         the picker's open list would cover it right when a
                         search finds nobody, which is when it is needed. */}
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h2 className="h3 text-base text-ink">Faculty member</h2>
-                      {!editing && (
-                        <button type="button" onClick={() => setAddingFaculty(true)} className="btn btn-ghost btn-xs">
-                          <IconUserPlus />
-                          Add a new faculty member
-                        </button>
+                      <h2 className="h3 text-base text-ink">{personLabel}</h2>
+                      <button type="button" onClick={() => setAddingFaculty(true)} className="btn btn-ghost btn-xs">
+                        <IconUserPlus />
+                        Add a new faculty member
+                      </button>
+                    </div>
+                    {authors.length > 0 && (
+                      <ul className="mt-3 flex list-none flex-wrap gap-2 p-0" aria-label="Selected authors">
+                        {authors.map((person, index) => {
+                          // The record's own faculty member stays once it is saved.
+                          const fixed = editing && index === 0;
+                          return (
+                            <li key={person.id} className="chip gap-1.5 py-1 pl-3 pr-1.5">
+                              <span className="font-medium text-ink">{person.name}</span>
+                              {index === 0 && authors.length > 1 && <span className="text-xs text-muted">· first</span>}
+                              {!fixed && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeAuthor(person)}
+                                  className="icon-btn icon-btn-sm"
+                                  aria-label={`Remove ${person.name}`}
+                                >
+                                  <IconX className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                    <div className="mt-3 max-w-xl">
+                      <Combobox
+                        id="faculty"
+                        label={authors.length ? addAnother : personLabel}
+                        required={!faculty}
+                        value={facultyText}
+                        onChange={setFacultyText}
+                        onSelect={(option) => {
+                          addAuthor(option);
+                          setFacultyNotice("");
+                        }}
+                        options={facultyOptions.filter((option) => !authors.some((p) => p.id === option.id))}
+                        loading={facultyLoading}
+                        filterLocally={false}
+                        placeholder="Search teachers by name or email"
+                        error={facultyError}
+                        hint="Choose every SRHU teacher involved. The record shows in each one's research."
+                        emptyHint="No teacher matches that search. Use “Add a new faculty member” above to add them."
+                        renderOption={(option) => (
+                          <span className="flex flex-col">
+                            <span className="font-medium">{option.name}</span>
+                            <span className="text-xs text-muted">
+                              {[option.designation, option.email].filter(Boolean).join(" · ")}
+                            </span>
+                          </span>
+                        )}
+                      />
+                      {facultyNotice && (
+                        <p className="mt-2 text-sm text-ink" role="status">
+                          {facultyNotice}
+                        </p>
                       )}
                     </div>
-                    {editing ? (
-                      <p className="mt-2 text-sm text-ink">
-                        <span className="font-semibold">{faculty?.name}</span>
-                      </p>
-                    ) : (
-                      <div className="mt-3 max-w-xl">
-                        <Combobox
-                          id="faculty"
-                          label="Faculty Name"
-                          required
-                          value={facultyText}
-                          onChange={(text) => {
-                            setFacultyText(text);
-                            if (faculty && text !== faculty.name) setFaculty(null);
-                          }}
-                          onSelect={(option) => {
-                            setFaculty(option);
-                            setFacultyText(option.name);
-                            setFacultyError("");
-                            setFacultyNotice("");
-                          }}
-                          options={facultyOptions}
-                          loading={facultyLoading}
-                          filterLocally={false}
-                          placeholder="Search teachers by name or email"
-                          error={facultyError}
-                          hint={faculty ? [faculty.designation, faculty.email].filter(Boolean).join(" · ") : undefined}
-                          emptyHint="No teacher matches that search. Use “Add a new faculty member” above to add them."
-                          renderOption={(option) => (
-                            <span className="flex flex-col">
-                              <span className="font-medium">{option.name}</span>
-                              <span className="text-xs text-muted">
-                                {[option.designation, option.email].filter(Boolean).join(" · ")}
-                              </span>
-                            </span>
-                          )}
-                        />
-                        {facultyNotice && (
-                          <p className="mt-2 text-sm text-ink" role="status">
-                            {facultyNotice}
-                          </p>
-                        )}
-                      </div>
-                    )}
                     {manager && doiField}
                   </section>
                 )}
@@ -735,7 +729,7 @@ export default function ResearchForm() {
                       </div>
                     )}
 
-                    {/* Managers see DOI just below Faculty Name; teachers see it below the details. */}
+                    {/* Managers see DOI just below the author's name; teachers see it below the details. */}
                     {fields.filter((field) => field.type !== "doi" && isFieldShown(field, details)).map((field) => (
                       <DetailField
                         key={field.key}
@@ -763,69 +757,10 @@ export default function ResearchForm() {
                       />
                     </div>
 
-                    <div className="field col-span-2">
-                      <label htmlFor="abstract">
-                        Abstract / summary<span className="ml-2 font-normal text-muted">(Optional)</span>
-                      </label>
-                      <textarea
-                        id="abstract"
-                        rows={4}
-                        value={form.abstract}
-                        onChange={(e) => setField("abstract", e.target.value)}
-                        maxLength={4000}
-                        className="input"
-                      />
-                    </div>
                     {!manager && doiField}
                   </div>
-
-                  {manager && (
-                    <div id="form-evidence" className="mt-4 border-t hairline pt-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-ink">
-                            Research evidence <span className="font-normal text-muted">(Optional)</span>
-                          </p>
-                          <p className="field-hint mt-0.5">Uploaded with this research record when you save or record it.</p>
-                        </div>
-                        <EvidenceQueue
-                          tags={category.evidence_tags || []}
-                          limits={limits}
-                          required={false}
-                          existing={existingEvidence}
-                          onRemoveExisting={editing ? dropExisting : undefined}
-                          queued={queued}
-                          setQueued={setQueued}
-                          busy={saving}
-                          compact
-                        />
-                      </div>
-                    </div>
-                  )}
                 </section>
               </>
-            )}
-
-            {category && !manager && (editing || formStep === "details") && (
-              <section id="form-evidence" className="glass scroll-mt-24 p-5 sm:p-6">
-                <h2 className="h3 text-base text-ink">
-                  Evidence
-                  {evidenceRequired ? <span className="req">*</span> : <span className="ml-2 text-sm font-normal text-muted">(Optional)</span>}
-                </h2>
-                <p className="prose-muted mt-0.5 mb-3 text-xs">
-                  The paper, certificates or letters behind this record — uploaded when you save.
-                </p>
-                <EvidenceQueue
-                  tags={category.evidence_tags || []}
-                  limits={limits}
-                  required={evidenceRequired}
-                  existing={existingEvidence}
-                  onRemoveExisting={editing ? dropExisting : undefined}
-                  queued={queued}
-                  setQueued={setQueued}
-                  busy={saving}
-                />
-              </section>
             )}
 
             <DuplicateNotice
@@ -834,7 +769,7 @@ export default function ResearchForm() {
               title="Already recorded for someone else"
             />
 
-            {category && (editing || formStep === "details") && missingNow.length > 0 && (
+            {category && missingNow.length > 0 && (
               <div
                 className="flex flex-wrap items-start gap-3 rounded-2xl border p-4"
                 data-tint=""
@@ -872,7 +807,7 @@ export default function ResearchForm() {
               </div>
             )}
 
-            {(editing || formStep === "details") && (
+            {(editing || category) && (
               <div className="flex flex-wrap items-center justify-end gap-3">
                 <Link to={backTo} className="btn btn-ghost">
                   Cancel
@@ -901,15 +836,37 @@ export default function ResearchForm() {
           </form>
         )}
       </div>
-      {manager && !editing && (
+      <Modal
+        open={Boolean(pendingType)}
+        onClose={() => setPendingType("")}
+        eyebrow="Change research type"
+        title={`Switch to ${byKey[pendingType]?.label || "another type"}?`}
+        subtitle={`The ${category?.label.toLowerCase() || "record"} details you filled in will be cleared. The title, date and link stay.`}
+        footer={
+          <>
+            <button type="button" onClick={() => setPendingType("")} className="btn btn-ghost">
+              Keep {category?.label || "this type"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                chooseCategory(pendingType);
+                setPendingType("");
+              }}
+              className="btn btn-primary"
+            >
+              Switch and clear details
+            </button>
+          </>
+        }
+      />
+      {manager && (
         <AddFacultyModal
           open={addingFaculty}
-          initialName={faculty ? "" : facultyText}
+          initialName={facultyText}
           onClose={() => setAddingFaculty(false)}
           onAdded={(person, message) => {
-            setFaculty(person);
-            setFacultyText(person.name);
-            setFacultyError("");
+            addAuthor(person);
             setFacultyNotice(message);
             setAddingFaculty(false);
           }}
@@ -943,7 +900,7 @@ function DetailField({ field, value, required, missing, problem, onTextChange, o
         className={`input ${value ? "" : "is-placeholder"}`}
       >
         <option value="">Choose…</option>
-        {field.options.map((option) => (
+        {(value && !field.options.includes(value) ? [...field.options, value] : field.options).map((option) => (
           <option key={option} value={option}>
             {option}
           </option>
@@ -955,7 +912,7 @@ function DetailField({ field, value, required, missing, problem, onTextChange, o
       <MultiSelectDropdown
         id={id}
         labelledBy={`${id}-label`}
-        options={field.options}
+        options={[...field.options, ...(Array.isArray(value) ? value.filter((v) => !field.options.includes(v)) : [])]}
         value={Array.isArray(value) ? value : []}
         onChange={onChange}
         placeholder="Choose all that apply"

@@ -167,6 +167,10 @@ class Settings(BaseSettings):
     # server. Set R2_DIRECT_UPLOAD_ENABLED=false to fall back to posting files
     # through the API. Needs the bucket CORS rule from scripts/configure_r2.py.
     r2_direct_upload_enabled: bool = True
+    # Small WebP previews of uploaded photos for the grids and covers
+    # (app/services/media_previews.py). Off only in the test suite, which must
+    # not write to real storage.
+    media_previews_enabled: bool = True
     # How long one pre-signed PUT URL works. The browser asks for a fresh one
     # when a URL expires mid-upload, so this only bounds a leaked URL.
     r2_upload_url_expiry: int = Field(default=60 * 60, ge=60, le=7 * 24 * 60 * 60)
@@ -198,9 +202,8 @@ class Settings(BaseSettings):
     # production deployment also trusted every private-network and localhost
     # origin, with allow_credentials on.
     #
-    # In production set it to something like
-    # ^https://srhu-capture(-[a-z0-9-]+)?\.vercel\.app$ to admit Vercel
-    # preview deployments, or leave it empty.
+    # In production leave it empty, or set it to a pattern for any further
+    # frontend origins, e.g. ^https://(www\.)?campus\.example\.edu$.
     cors_origin_regex: str | None = None
 
     model_config = SettingsConfigDict(

@@ -24,7 +24,7 @@ JOURNAL = {
     "outcome_status": "published",
     "details": {
         "authors": "Meera Joshi, Arjun Rawat",
-        "author_position": "First author",
+        "author_position": "First author / Corresponding author",
         "journal": "Wound Care",
         "indexing": ["Scopus", "PubMed"],
         "doi": "https://doi.org/10.1016/j.wc.2026.01.001",
@@ -90,14 +90,81 @@ class ToolsTest(ResearchFixture, unittest.TestCase):
         self.verified()
         self.create(faculty_id=str(OTHER_TEACHER_ID), title="Another teacher's draft patent filing")
         book = load_workbook(BytesIO(self.download("/research/export.xlsx", "teacher").content))
-        self.assertEqual(book["Patent"].max_row, 2)  # header + the teacher's one record
+        self.assertEqual(book["Patent - IPR"].max_row, 2)  # header + the teacher's one record
         book = load_workbook(BytesIO(self.download("/research/export.xlsx", "manager").content))
-        self.assertEqual(book["Patent"].max_row, 3)
+        self.assertEqual(book["Patent - IPR"].max_row, 3)
         book = load_workbook(BytesIO(self.download("/dean/research/export.xlsx", "dean").content))
-        self.assertEqual(book["Patent"].max_row, 2)  # the Dean never sees drafts
-        headers = [cell.value for cell in book["Patent"][1]]
+        self.assertEqual(book["Patent - IPR"].max_row, 2)  # the Dean never sees drafts
+        headers = [cell.value for cell in book["Patent - IPR"][1]]
         self.assertIn("Application number", headers)
         self.assertNotIn("Department", headers)
+        self.assertNotIn("Abstract", headers)
+
+    def test_one_faculty_members_research_downloads_under_their_name(self):
+        self.verified()
+        self.create(faculty_id=str(OTHER_TEACHER_ID), title="Another teacher's draft patent filing")
+        response = self.download(f"/research/export.xlsx?faculty_id={TEACHER_ID}", "manager")
+        self.assertIn("research-Meera-Joshi-", response.headers["content-disposition"])
+        book = load_workbook(BytesIO(response.content))
+        self.assertEqual(book["Patent - IPR"].max_row, 2)
+        # A teacher cannot widen their export to someone else's work.
+        book = load_workbook(BytesIO(self.download(
+            f"/research/export.xlsx?faculty_id={OTHER_TEACHER_ID}", "teacher").content))
+        self.assertEqual(book["Patent - IPR"].max_row, 2)
+
+    def test_a_co_authored_paper_belongs_to_every_srhu_author(self):
+        paper = self.verified(**copy.deepcopy(JOURNAL), co_faculty_ids=[str(OTHER_TEACHER_ID), str(TEACHER_ID)])
+        # The record's own faculty member is not repeated among co-authors.
+        self.assertEqual([p["name"] for p in paper["co_faculty"]], ["Arjun Rawat"])
+        # The co-author sees it in their portfolio, but cannot change it.
+        mine = self.call("GET", "/research/records", "other-teacher")
+        self.assertEqual([r["id"] for r in mine["records"]], [paper["id"]])
+        seen = self.call("GET", f"/research/records/{paper['id']}", "other-teacher")["record"]
+        self.assertEqual(seen["permissions"]["can_edit"], False)
+        self.assertTrue(seen["permissions"]["co_author"])
+        self.call("PATCH", f"/research/records/{paper['id']}", "other-teacher", 404, json={"title": "Not mine"})
+        # Counted once per author, once in the total.
+        summary = self.call("GET", "/research/faculty-summary", "manager")
+        self.assertEqual(sorted((r["name"], r["journal"]) for r in summary["faculty"]),
+                         [("Arjun Rawat", 1), ("Meera Joshi", 1)])
+        self.assertEqual(summary["total"], 1)
+        listed = self.call("GET", f"/research/records?faculty_id={OTHER_TEACHER_ID}", "manager")
+        self.assertEqual(listed["total"], 1)
+        book = load_workbook(BytesIO(self.download(f"/research/export.xlsx?faculty_id={OTHER_TEACHER_ID}", "manager").content))
+        self.assertEqual(book["Journal publication"].cell(row=2, column=1).value, "Meera Joshi, Arjun Rawat")
+        # The Event Manager can change who the co-authors are; a teacher cannot name any.
+        cleared = self.call("PATCH", f"/research/records/{paper['id']}", "manager", json={"co_faculty_ids": []})["record"]
+        self.assertEqual(cleared["co_faculty"], [])
+        self.call("POST", "/research/records", "teacher", 403,
+                  json={**copy.deepcopy(JOURNAL), "co_faculty_ids": [str(OTHER_TEACHER_ID)]})
+        self.call("POST", "/research/records", "manager", 400,
+                  json={**copy.deepcopy(JOURNAL), "faculty_id": str(TEACHER_ID), "co_faculty_ids": [str(MANAGER_ID)]})
+
+    def test_the_faculty_wise_table_downloads_as_excel(self):
+        self.verified()
+        self.verified(**copy.deepcopy(JOURNAL), co_faculty_ids=[str(OTHER_TEACHER_ID)])
+        for who, path in (("manager", "/research/faculty-summary.xlsx"), ("dean", "/dean/research/faculty-summary.xlsx")):
+            sheet = load_workbook(BytesIO(self.download(path, who).content)).active
+            header = [c.value for c in sheet[4]]
+            rows = {r[0]: dict(zip(header, r)) for r in sheet.iter_rows(min_row=5, values_only=True)}
+            self.assertEqual(rows["Meera Joshi"]["Total"], 2)
+            self.assertEqual(rows["Arjun Rawat"]["Journal publication"], 1)
+        self.download("/research/faculty-summary.xlsx", "teacher", 403)
+
+    def test_faculty_summary_counts_each_faculty_members_research(self):
+        self.verified()
+        self.verified(title="A second herbal dressing patent filing")
+        self.verified(**copy.deepcopy(JOURNAL))
+        self.create(faculty_id=str(OTHER_TEACHER_ID), title="Another teacher's draft patent filing")
+        body = self.call("GET", "/research/faculty-summary", "manager")
+        self.assertEqual(len(body["faculty"]), 1)  # drafts are not counted
+        row = body["faculty"][0]
+        self.assertEqual(row["faculty_id"], str(TEACHER_ID))
+        self.assertEqual((row["total"], row["patent"], row["journal"], row["funded_project"]), (3, 2, 1, 0))
+        self.call("GET", "/research/faculty-summary", "teacher", 403)
+        # The Dean's covers the Event Manager's submissions, as their page does.
+        dean = self.call("GET", "/dean/research/faculty-summary", "dean")
+        self.assertEqual([r["total"] for r in dean["faculty"]], [3])
 
     def test_naac_export_holds_verified_records_only(self):
         self.verified(**copy.deepcopy(JOURNAL))
@@ -111,7 +178,8 @@ class ToolsTest(ResearchFixture, unittest.TestCase):
         # NAAC asks for the teacher's department: always the one school.
         self.assertEqual(papers.cell(row=3, column=4).value, "School of Science and Technology")
         self.assertEqual(papers.cell(row=3, column=10).value, "https://doi.org/10.1016/j.wc.2026.01.001")
-        patents = book["Patents"]
+        self.assertIn("Funded projects", book.sheetnames)
+        patents = book["Patents and IPR"]
         self.assertEqual(patents.cell(row=3, column=2).value, "No verified records of this kind for the period.")
         self.download("/research/export/naac.xlsx", "teacher", 403)
 
@@ -122,7 +190,7 @@ class ToolsTest(ResearchFixture, unittest.TestCase):
         pdf = self.download(f"/research/faculty/{TEACHER_ID}/cv.pdf", "teacher")
         self.assertTrue(pdf.content.startswith(b"%PDF"))
         self.download(f"/research/faculty/{OTHER_TEACHER_ID}/cv.pdf", "teacher", 403)
-        self.download(f"/research/faculty/{OTHER_TEACHER_ID}/cv.pdf", "manager", 403)  # not the Event Manager's
+        self.download(f"/research/faculty/{OTHER_TEACHER_ID}/cv.pdf", "manager")  # the faculty-wise download
         self.download(f"/dean/research/faculty/{TEACHER_ID}/cv.pdf", "dean")
         self.download(f"/dean/research/faculty/{MANAGER_ID}/cv.pdf", "dean", 404)
 
@@ -143,9 +211,8 @@ class ToolsTest(ResearchFixture, unittest.TestCase):
             "Teacher email *": "MEERA@srhu.edu.in",
             "Paper title *": "Herbal dressings for chronic wounds in rural clinics",
             "Publication date * (YYYY-MM-DD)": datetime(2026, 3, 10),
-            "Status": "Published",
-            "Faculty member's authorship *": "First author",
-            "Journal *": "Wound Care",
+            "Authorship *": "First author / Corresponding author",
+            "Name of journal *": "Wound Care",
             "Indexed in * (separate with ;)": "Scopus; PubMed",
         })
         row(journal, {
@@ -162,10 +229,11 @@ class ToolsTest(ResearchFixture, unittest.TestCase):
         patent = book["Patent"]
         row(patent, {
             "Teacher email *": "arjun@srhu.edu.in",
-            "Title of the invention *": "Solar sterilising cabinet for clinics",
+            "Title *": "Solar sterilising cabinet for clinics",
             "Filing date * (YYYY-MM-DD)": "2024-01-15",
             "Status": "filed",
-            "Inventors *": "Arjun Rawat",
+            "IPR type *": "Patent",
+            "All inventors *": "Arjun Rawat",
             "Patent office *": "India (IPO)",
         })
         self.assertIn("Teacher email *", headers)

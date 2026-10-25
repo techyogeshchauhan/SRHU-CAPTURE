@@ -41,6 +41,7 @@ from app.schemas.superadmin import (
     UpdateUserProfileRequest,
     UploadLimitsUpdateRequest,
 )
+from app.services.excel_export import build_workbook, xlsx_response
 from app.services import email_service
 from app.services.audit_service import log_audit_event
 from app.services.report_pdf import split_description
@@ -1052,22 +1053,16 @@ def csv_cell(value: Any) -> str:
         return "'" + text
     return text
 
-@router.get("/events/export")
-def export_events_csv(
-    authorization: str | None = Header(default=None),
-    # Named event_status, not status: `status` would shadow the fastapi.status
-    # module imported at the top of this file, so any HTTPException raised here
-    # would fail with AttributeError on a str. alias keeps the query-string
-    # name the frontend already sends.
-    event_status: str | None = Query(default=None, alias="status"),
-    q: str | None = Query(default=None, max_length=120),
-    from_date: str | None = Query(default=None),
-    to_date: str | None = Query(default=None),
-    event_type: str | None = Query(default=None),
-    include_drafts: bool = Query(default=False),
-    include_archived: bool = Query(default=False),
-):
-    superadmin = get_superadmin_user(authorization)
+def _accreditation_events(
+    event_status: str | None,
+    q: str | None,
+    from_date: str | None,
+    to_date: str | None,
+    event_type: str | None,
+    include_drafts: bool,
+    include_archived: bool,
+) -> tuple[list[dict], dict]:
+    """(the events, their people by id) for the accreditation export."""
 
     # The same filter the Events page lists with (_dean_event_query): its
     # search box (`q`), its status tabs -- groups, so "approved" also brings
@@ -1117,56 +1112,84 @@ def export_events_csv(
     if valid_tids:
         for t in users.find({"_id": {"$in": valid_tids}}):
             teacher_map[str(t["_id"])] = t
+    return event_docs, teacher_map
+
+
+ACCREDITATION_HEADERS = [
+    "Event ID",
+    "Event Name",
+    "Event Type",
+    "Status",
+    "Start Date",
+    "End Date",
+    "Start Time",
+    "End Time",
+    "Location",
+    "Organizer",
+    "Coordinator Name",
+    "Coordinator Mobile",
+    "Faculty / Teacher Name",
+    "Faculty Email",
+    "Department",
+    "Created At",
+    "Description",
+]
+
+
+def _accreditation_row(ev: dict, teacher_map: dict) -> list:
+    teacher = teacher_map.get(str(ev.get("teacher_id") or ev.get("owner_id")), {}) or {
+        "name": ev.get("owner_name", ""),
+        "email": ev.get("owner_email", ""),
+    }
+    # The stored description carries the form's metadata comment; the
+    # file wants only the text the teacher wrote.
+    description, _meta = split_description(ev.get("description"))
+    return [
+        ev.get("_id", ""),
+        ev.get("event_name", ""),
+        ev.get("event_type", ""),
+        ev.get("status", ""),
+        ev.get("event_date", ""),
+        ev.get("end_date", ""),
+        ev.get("start_time", ""),
+        ev.get("end_time", ""),
+        ev.get("location", ""),
+        ev.get("organizer", ""),
+        ev.get("coordinator_name", ""),
+        ev.get("coordinator_contact", ""),
+        teacher.get("name", ""),
+        teacher.get("email", ""),
+        teacher.get("department", ""),
+        ev.get("created_at", ""),
+        description,
+    ]
+
+
+@router.get("/events/export")
+def export_events_csv(
+    authorization: str | None = Header(default=None),
+    # Named event_status, not status: `status` would shadow the fastapi.status
+    # module imported at the top of this file, so any HTTPException raised here
+    # would fail with AttributeError on a str. alias keeps the query-string
+    # name the frontend already sends.
+    event_status: str | None = Query(default=None, alias="status"),
+    q: str | None = Query(default=None, max_length=120),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+    event_type: str | None = Query(default=None),
+    include_drafts: bool = Query(default=False),
+    include_archived: bool = Query(default=False),
+):
+    superadmin = get_superadmin_user(authorization)
+    event_docs, teacher_map = _accreditation_events(
+        event_status, q, from_date, to_date, event_type, include_drafts, include_archived
+    )
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow([
-        "Event ID",
-        "Event Name",
-        "Event Type",
-        "Status",
-        "Start Date",
-        "End Date",
-        "Start Time",
-        "End Time",
-        "Location",
-        "Organizer",
-        "Coordinator Name",
-        "Coordinator Mobile",
-        "Faculty / Teacher Name",
-        "Faculty Email",
-        "Department",
-        "Created At",
-        "Description",
-    ])
-
+    writer.writerow(ACCREDITATION_HEADERS)
     for ev in event_docs:
-        teacher = teacher_map.get(str(ev.get("teacher_id") or ev.get("owner_id")), {}) or {
-            "name": ev.get("owner_name", ""),
-            "email": ev.get("owner_email", ""),
-        }
-        # The stored description carries the form's metadata comment; the
-        # file wants only the text the teacher wrote.
-        description, _meta = split_description(ev.get("description"))
-        writer.writerow([
-            csv_cell(ev.get("_id", "")),
-            csv_cell(ev.get("event_name", "")),
-            csv_cell(ev.get("event_type", "")),
-            csv_cell(ev.get("status", "")),
-            csv_cell(ev.get("event_date", "")),
-            csv_cell(ev.get("end_date", "")),
-            csv_cell(ev.get("start_time", "")),
-            csv_cell(ev.get("end_time", "")),
-            csv_cell(ev.get("location", "")),
-            csv_cell(ev.get("organizer", "")),
-            csv_cell(ev.get("coordinator_name", "")),
-            csv_cell(ev.get("coordinator_contact", "")),
-            csv_cell(teacher.get("name", "")),
-            csv_cell(teacher.get("email", "")),
-            csv_cell(teacher.get("department", "")),
-            csv_cell(ev.get("created_at", "")),
-            csv_cell(description),
-        ])
+        writer.writerow([csv_cell(value) for value in _accreditation_row(ev, teacher_map)])
 
     csv_content = output.getvalue()
     filename = f"events_naac_nirf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
@@ -1183,6 +1206,42 @@ def export_events_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/events/export.xlsx")
+def export_events_xlsx(
+    authorization: str | None = Header(default=None),
+    # Named event_status, not status: `status` would shadow the fastapi.status
+    # module imported at the top of this file, so any HTTPException raised here
+    # would fail with AttributeError on a str. alias keeps the query-string
+    # name the frontend already sends.
+    event_status: str | None = Query(default=None, alias="status"),
+    q: str | None = Query(default=None, max_length=120),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+    event_type: str | None = Query(default=None),
+    include_drafts: bool = Query(default=False),
+    include_archived: bool = Query(default=False),
+):
+    """The same accreditation export as the CSV, as an Excel workbook."""
+    superadmin = get_superadmin_user(authorization)
+    event_docs, teacher_map = _accreditation_events(
+        event_status, q, from_date, to_date, event_type, include_drafts, include_archived
+    )
+    rows = [_accreditation_row(ev, teacher_map) for ev in event_docs]
+    filename = f"events_naac_nirf_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    content = build_workbook(
+        "Events (NAAC - NIRF)", ACCREDITATION_HEADERS, rows,
+        note=f"{len(rows)} event{'s' if len(rows) != 1 else ''} · as filtered on the Events page",
+    )
+
+    log_audit_event(
+        actor=superadmin,
+        action="events_exported",
+        target_type="events",
+        details={"count": len(event_docs), "filename": filename},
+    )
+    return xlsx_response(content, filename)
 
 
 # ============================================================

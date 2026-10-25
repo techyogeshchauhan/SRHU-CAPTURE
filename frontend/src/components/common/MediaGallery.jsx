@@ -121,7 +121,7 @@ export default function MediaGallery({
                   </>
                 ) : (
                   <img
-                    src={item.media_url}
+                    src={item.preview_url || item.media_url}
                     alt=""
                     loading="lazy"
                     onError={() => onLoadError?.()}
@@ -427,7 +427,7 @@ function MediaViewer({ items, index, onIndex, onClose, title, onLoadError, capti
                   <IconPlay className="absolute inset-0 m-auto h-5 w-5 text-white drop-shadow" />
                 </>
               ) : (
-                <img src={entry.media_url} alt="" loading="lazy" className="h-full w-full object-cover" />
+                <img src={entry.preview_url || entry.media_url} alt="" loading="lazy" className="h-full w-full object-cover" />
               )}
             </button>
           ))}

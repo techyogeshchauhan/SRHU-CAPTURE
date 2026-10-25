@@ -65,6 +65,8 @@ ALLOWED_EVENT_TYPES = (
     "Seminar",
     "Conference",
     "Celebration",
+    "Funded FDP",
+    "Funded Programme",
     "Other",
 )
 

@@ -62,13 +62,14 @@ from app.schemas.event_manager import (
     ManagedReportRequest,
     ReportPhotosRequest,
 )
-from app.schemas.events import BulkEventIdsRequest, draft_details_error
+from app.schemas.events import BulkEventIdsRequest, EventExportRequest, draft_details_error
 from app.schemas.reports import ReportCustomizationOptions
 from app.schemas.uploads import DirectUploadSignRequest, DirectUploadStartRequest
 from app.services import direct_upload, report_files
 from app.services.event_dashboard import dashboard_events
 from app.services.event_fields import many_with_legacy_metadata, with_legacy_metadata
 from app.services.event_types import resolve_event_type, write_event_with_type
+from app.services.media_previews import attach_preview, build_preview, present_media
 from app.services.managed_report_pdf import (
     ReportEntry,
     attachment_for,
@@ -121,7 +122,7 @@ def _own_event_or_404(event_id: str, user: dict) -> dict:
 
 def _list_media(request: Request, event_key: str) -> list[dict]:
     cursor = managed_event_media.find({"event_id": event_key}).sort("created_at", ASCENDING)
-    return [absolutize(request, item, "media_url") for item in serialize_many(cursor)]
+    return [present_media(request, item) for item in serialize_many(cursor)]
 
 
 def _list_documents(request: Request, event_key: str) -> list[dict]:
@@ -188,10 +189,24 @@ def list_events(
     skip: int | None = Query(default=None, ge=0),
     limit: int | None = Query(default=None, ge=1, le=1000),
     dashboard: bool = Query(default=False),
+    # My Events: one filtered page with tab counts (see own_events_page).
+    paged: bool = Query(default=False),
+    q: str | None = Query(default=None, max_length=200),
+    tab: str | None = Query(default=None, alias="status", max_length=20),
+    event_type: str | None = Query(default=None, max_length=80),
+    start_date: str | None = Query(default=None, max_length=10),
+    end_date: str | None = Query(default=None, max_length=10),
     user: dict = Depends(manager_dep),
 ):
     if dashboard:
         return dashboard_events(managed_events, {"owner_id": user["id"]})
+    if paged:
+        from app.routers.events import own_events_page
+
+        return own_events_page(
+            managed_events, {"owner_id": user["id"]}, tab=tab, q=q, event_type=event_type,
+            start_date=start_date, end_date=end_date, skip=skip, limit=limit or 25,
+        )
     event_list, total = paginate(
         managed_events, {"owner_id": user["id"]}, "created_at", DESCENDING, skip, limit
     )
@@ -205,6 +220,38 @@ def list_events(
         "skip": skip or 0,
         "limit": limit,
     }
+
+
+@router.get("/events/export.xlsx")
+def export_events_filtered(
+    q: str | None = Query(default=None, max_length=200),
+    tab: str | None = Query(default=None, alias="status", max_length=20),
+    event_type: str | None = Query(default=None, max_length=80),
+    start_date: str | None = Query(default=None, max_length=10),
+    end_date: str | None = Query(default=None, max_length=10),
+    user: dict = Depends(manager_dep),
+):
+    """My Events under its filters, every page of it, as Excel."""
+    from app.routers.events import OWN_EVENT_TABS, own_events_filtered_workbook, own_events_query
+    from app.services.excel_export import stamped, xlsx_response
+
+    query = own_events_query(
+        {"owner_id": user["id"]}, q=q, event_type=event_type, start_date=start_date, end_date=end_date
+    )
+    wanted = (tab or "all").strip().lower()
+    if wanted in OWN_EVENT_TABS:
+        query["status"] = {"$in": list(OWN_EVENT_TABS[wanted])}
+    return xlsx_response(own_events_filtered_workbook(managed_events, query, user), stamped("my-events"))
+
+
+@router.post("/events/export.xlsx")
+def export_events(payload: EventExportRequest, user: dict = Depends(manager_dep)):
+    """The Event Manager's events as filtered on My Events, as Excel."""
+    from app.routers.events import own_events_workbook
+    from app.services.excel_export import stamped, xlsx_response
+
+    content = own_events_workbook(managed_events, {"owner_id": user["id"]}, payload.event_ids, user)
+    return xlsx_response(content, stamped("my-events"))
 
 
 @router.post("/events", status_code=status.HTTP_201_CREATED)
@@ -520,6 +567,8 @@ def upload_media(
             buffer, file_name=file_name, content_type=info["content_type"],
             kind="media", event_id=event_key, teacher_id=user["id"],
         )
+        # Made while the original is still at hand; stored once the record is.
+        preview = build_preview(buffer) if is_image else None
     finally:
         buffer.close()
 
@@ -530,10 +579,12 @@ def upload_media(
         original_name=file.filename,
     )
     _record(managed_event_media, document, stored, cap_query, cap, media_type, cap_bytes)
+    if preview:
+        attach_preview(managed_event_media, document, event_id=event_key, owner_id=user["id"], data=preview)
     return {
         "success": True,
         "message": "Media uploaded successfully",
-        "media": absolutize(request, serialize(document), "media_url"),
+        "media": present_media(request, serialize(document)),
     }
 
 
@@ -716,6 +767,7 @@ def complete_direct_upload(
     event_id: str,
     session_id: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(manager_dep),
 ):
     session = direct_upload.claim_session(
@@ -744,6 +796,12 @@ def complete_direct_upload(
         direct_upload.finish(session, direct_upload.FAILED)
         raise
     direct_upload.finish(session, direct_upload.COMPLETED, record_id=document["_id"])
+    # The photo went straight to storage, so its preview is made from there
+    # -- after the response, so the browser does not wait for the read-back.
+    if media_type == "image":
+        background_tasks.add_task(
+            attach_preview, collection, dict(document), event_id=str(event["_id"]), owner_id=user["id"]
+        )
 
     return _direct_upload_response(request, document)
 

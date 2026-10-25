@@ -210,6 +210,18 @@ def read_range(object_key: str, *, length: int) -> bytes:
         return body.read(length)
 
 
+def download_to(object_key: str, fileobj) -> bool:
+    """Stream a whole object into ``fileobj`` (a spooled file), in parts, so a
+    photo is never held in memory twice. False if the object is missing."""
+    try:
+        _client().download_fileobj(settings.r2_bucket_name, object_key, fileobj)
+        return True
+    except ClientError as error:
+        if _error_code(error) in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+
+
 def _error_code(error: ClientError) -> str:
     return str(error.response.get("Error", {}).get("Code", ""))
 

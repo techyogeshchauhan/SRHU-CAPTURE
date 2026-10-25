@@ -14,6 +14,8 @@ from datetime import date
 from pydantic import BaseModel, Field, field_validator
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# A paper's SRHU authors besides the one the record belongs to.
+MAX_CO_AUTHORS = 20
 _URL = re.compile(r"^https?://\S+$", re.I)
 
 
@@ -51,7 +53,6 @@ class _RecordFields(BaseModel):
     record_date: str | None = None
     outcome_status: str | None = Field(default=None, max_length=40)
     details: dict | None = None
-    abstract: str | None = Field(default=None, max_length=4000)
     link: str | None = Field(default=None, max_length=600)
 
     @field_validator("title")
@@ -63,12 +64,6 @@ class _RecordFields(BaseModel):
     @classmethod
     def check_date(cls, value: str | None) -> str | None:
         return _clean_date(value)
-
-    @field_validator("abstract")
-    @classmethod
-    def check_abstract(cls, value: str | None) -> str | None:
-        text = (value or "").strip()
-        return text or None
 
     @field_validator("link")
     @classmethod
@@ -82,6 +77,9 @@ class ResearchCreateRequest(_RecordFields):
     # Whose research it is. An Event Manager names a teacher; a teacher may
     # leave it out (it is always themselves).
     faculty_id: str | None = Field(default=None, max_length=40)
+    # Other SRHU teachers who are authors (inventors, investigators) of the
+    # same work. Only the Event Manager names them.
+    co_faculty_ids: list[str] | None = Field(default=None, max_length=MAX_CO_AUTHORS)
 
     @field_validator("title")
     @classmethod
@@ -93,6 +91,7 @@ class ResearchCreateRequest(_RecordFields):
 
 
 class ResearchUpdateRequest(_RecordFields):
+    co_faculty_ids: list[str] | None = Field(default=None, max_length=MAX_CO_AUTHORS)
     # The record's updated_at as the editor last saw it. When given, a save
     # over someone else's newer change is refused rather than overwriting it:
     # the Event Manager and the teacher can both edit the same record.

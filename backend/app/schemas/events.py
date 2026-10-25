@@ -259,6 +259,15 @@ class BulkEventIdsRequest(BaseModel):
     event_ids: list[str] = Field(min_length=1, max_length=MAX_BULK_OWN_EVENTS)
 
 
+# Events one "Download Excel" of My Events may hold: the list as filtered on
+# screen, which is filtered in the browser.
+MAX_EXPORT_OWN_EVENTS = 5000
+
+
+class EventExportRequest(BaseModel):
+    event_ids: list[str] = Field(min_length=1, max_length=MAX_EXPORT_OWN_EVENTS)
+
+
 def draft_details_error(event: dict, request_type: type[EventCreateRequest] = EventCreateRequest) -> str | None:
     """Why a stored draft cannot be submitted as it stands, or None."""
     from pydantic import ValidationError

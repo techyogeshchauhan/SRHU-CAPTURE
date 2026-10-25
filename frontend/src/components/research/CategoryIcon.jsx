@@ -13,6 +13,7 @@ const ICONS = {
   patent: IconShield,
   project: IconSparkle, // Retained only for legacy records already in the portfolio.
   book: IconBookmark,
+  funded_project: IconSparkle,
   other: IconAward,
 };
 

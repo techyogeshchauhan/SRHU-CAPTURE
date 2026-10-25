@@ -644,7 +644,8 @@ class EventManagerDirectUploadTests(R2Fixture, EventManagerTestCase):
         self.assertEqual(comp.json()["document"]["category"], "report")
         saved = self.save(self.event["id"])
         self.assertEqual(saved.status_code, 200, saved.text)
-        self.assertEqual(saved.json()["event"]["status"], "recorded")
+        # Saved for real, it goes to the Dean for approval.
+        self.assertEqual(saved.json()["event"]["status"], "pending")
 
     def test_another_manager_cannot_use_the_session(self) -> None:
         started = self.start("a.png", PNG, "image/png").json()

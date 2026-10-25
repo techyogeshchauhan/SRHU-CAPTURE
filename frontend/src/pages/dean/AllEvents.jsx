@@ -36,6 +36,8 @@ import SubmissionsGroupedList from "../../components/dean/SubmissionsGroupedList
 import { bulkEvents } from "../../services/deanTeachers";
 import useEventReportDownload from "../../hooks/useEventReportDownload";
 import ReportCustomizationModal from "../../components/common/ReportCustomizationModal";
+import DownloadExcelButton from "../../components/common/DownloadExcelButton";
+import { downloadDeanEventsExcel } from "../../services/downloads";
 
 /**
  * A row's overflow menu for secondary actions. Rendered into <body> with fixed
@@ -1032,12 +1034,30 @@ function AllEvents() {
               </button>
             ))}
 
-            <div className="ml-auto flex items-center gap-3">
+            <div className="ml-auto flex flex-wrap items-center gap-3">
               <p className="num text-xs font-medium text-muted">
                 {total === 0
                   ? "No events"
                   : `Showing ${visibleEvents.length} of ${total}`}
               </p>
+
+              <DownloadExcelButton
+                className="btn btn-ghost btn-xs"
+                disabled={total === 0}
+                onDownload={() =>
+                  downloadDeanEventsExcel({
+                    event_date: query.date,
+                    start_date: query.startDate,
+                    end_date: query.endDate,
+                    event_type: query.type,
+                    q: query.q,
+                    source: query.source,
+                    status_bucket: query.status && query.status !== "all" ? query.status : undefined,
+                  })
+                }
+                onError={setError}
+                title="Every event matching these filters, not only those loaded, as an Excel file"
+              />
 
               {isFiltered && (
                 <button

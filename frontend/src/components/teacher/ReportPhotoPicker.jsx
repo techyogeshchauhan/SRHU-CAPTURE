@@ -76,7 +76,7 @@ export default function ReportPhotoPicker({ eventId, api, photos, initial, onSav
                 }`}
               >
                 <img
-                  src={photo.media_url}
+                  src={photo.preview_url || photo.media_url}
                   alt={photo.file_name}
                   className="h-28 w-full object-cover"
                   loading="lazy"
