@@ -264,7 +264,7 @@ def root():
 
 @app.get("/health")
 def health_check():
-    """Unauthenticated liveness probe (Railway's healthcheck path).
+    """Unauthenticated liveness probe, for a load balancer or uptime monitor.
 
     Returns only "ok" or "degraded" -- always with HTTP 200 so a database blip
     does not make the platform restart the service. The reasons (database

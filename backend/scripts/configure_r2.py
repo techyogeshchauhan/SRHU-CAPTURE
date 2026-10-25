@@ -17,7 +17,7 @@ Prints the current and proposed configuration and changes nothing unless
     python scripts/configure_r2.py --apply --origin https://preview.example.app
 
 CORS_ORIGIN_REGEX cannot be expressed in a bucket rule; pass such origins
-with --origin (R2 accepts one ``*`` wildcard, e.g. https://*.vercel.app).
+with --origin (R2 accepts one ``*`` wildcard, e.g. https://*.campus.example.edu).
 """
 
 from __future__ import annotations

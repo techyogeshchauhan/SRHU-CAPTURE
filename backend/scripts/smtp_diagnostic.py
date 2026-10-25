@@ -5,7 +5,7 @@ nothing from ``app``, so it still runs when app.config cannot be imported. A
 ``backend/.env`` file, when present, fills in anything the environment lacks.
 It never sends an email.
 
-Run from the backend directory, or in a Railway console:
+Run from the backend directory, on the server that sends the email:
     python scripts/smtp_diagnostic.py
 """
 
@@ -171,13 +171,13 @@ def _verdict(outcome: str, tcp: dict[int, str], port: int) -> None:
         elif unroutable and not timed_out:
             print("  Every SMTP port reported 'network unreachable'. The host has no")
             print("  route for outbound SMTP at all - the provider null-routes it. This")
-            print("  is a plan-level block, not a configuration problem, and no code")
-            print("  change works around it. Upgrade the plan, or use a hosted mail API")
-            print("  (SendGrid, Resend, Mailgun) in place of raw SMTP for this deployment.")
+            print("  is a network-level block, not a configuration problem, and no code")
+            print("  change works around it. Ask for outbound SMTP to be allowed, or use a")
+            print("  hosted mail API (SendGrid, Resend, Mailgun) in place of raw SMTP.")
         elif timed_out:
             print("  Every SMTP port timed out. A silent timeout is the signature of")
-            print("  provider-level egress filtering, which the free Railway plan applies.")
-            print("  Either upgrade the plan or switch to a hosted mail API.")
+            print("  egress filtering by a firewall or the hosting provider.")
+            print("  Ask for outbound SMTP to be allowed, or switch to a hosted mail API.")
         elif len(refused) == len(PROBE_PORTS):
             print("  Every port actively refused the connection. The network path is NOT")
             print("  filtered - a filtered port hangs instead of resetting. Nothing is")

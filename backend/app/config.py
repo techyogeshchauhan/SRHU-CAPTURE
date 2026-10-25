@@ -202,9 +202,8 @@ class Settings(BaseSettings):
     # production deployment also trusted every private-network and localhost
     # origin, with allow_credentials on.
     #
-    # In production set it to something like
-    # ^https://srhu-capture(-[a-z0-9-]+)?\.vercel\.app$ to admit Vercel
-    # preview deployments, or leave it empty.
+    # In production leave it empty, or set it to a pattern for any further
+    # frontend origins, e.g. ^https://(www\.)?campus\.example\.edu$.
     cors_origin_regex: str | None = None
 
     model_config = SettingsConfigDict(

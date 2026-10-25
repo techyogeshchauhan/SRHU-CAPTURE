@@ -10,7 +10,7 @@ Four files under ``LOG_DIR``:
 
 Each file rotates at LOG_FILE_MAX_MB and keeps LOG_FILE_BACKUP_COUNT old copies
 (``app.log.1`` ... ``app.log.N``), so the directory never grows past a fixed
-size. stdout is kept too: Railway and ``docker logs`` read it.
+size. stdout is kept too: the systemd journal and ``docker logs`` read it.
 
 ``RotatingFileHandler`` assumes one writing process. ``run.py`` starts a single
 uvicorn worker (the reloader's parent process never imports the app), which is

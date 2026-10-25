@@ -72,7 +72,7 @@ def _uses_tls(uri: str) -> bool:
 
 # One client per process; pymongo manages the connection pool internally.
 # TLS connections (MongoDB Atlas is always mongodb+srv://) verify against
-# certifi's CA bundle, because slim container images such as Railway's often
+# certifi's CA bundle, because slim container images and minimal servers often
 # ship without a current system bundle and the handshake then fails.
 #
 # connect=False defers everything network-related -- including the SRV DNS

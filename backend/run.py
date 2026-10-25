@@ -3,10 +3,11 @@
 Locally (`python run.py`) it listens on 0.0.0.0:8000 with auto-reload, so
 phones and laptops on the same network can reach it.
 
-On Railway the platform sets PORT, which switches auto-reload off. Railway ends
-HTTPS at its proxy, so the proxy headers are trusted: without them every request
-looks like plain http and the /files/... URLs handed to the browser would be
-http://, which an https frontend blocks as mixed content.
+In production set PORT (the systemd unit in README.md does), which switches
+auto-reload off. HTTPS ends at the reverse proxy (nginx), so its proxy headers
+are trusted: without them every request looks like plain http and the
+/files/... URLs handed to the browser would be http://, which an https
+frontend blocks as mixed content.
 """
 
 import os
@@ -23,10 +24,11 @@ import uvicorn
 # time -- unlimited password guessing against one account, because the
 # per-email rule is keyed on "{ip}|{email}" too.
 #
-# The default covers the private ranges a platform proxy actually speaks from
-# (Railway, Fly, a local nginx), so the deployment keeps working while a
-# request arriving straight from the internet is no longer believed. Set
-# FORWARDED_ALLOW_IPS to narrow it further to the proxy's exact address.
+# The default covers the addresses a reverse proxy actually speaks from
+# (nginx on the same machine, or one on the private network), so the
+# deployment keeps working while a request arriving straight from the
+# internet is no longer believed. Set FORWARDED_ALLOW_IPS to narrow it
+# further to the proxy's exact address.
 DEFAULT_FORWARDED_ALLOW_IPS = "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
 

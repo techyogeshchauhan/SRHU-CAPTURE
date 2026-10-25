@@ -17,7 +17,7 @@ from app.database import _uses_tls  # noqa: E402
 def settings_for(**overrides) -> Settings:
     values = {
         "jwt_secret_key": "unit-test-secret-key-0123456789",
-        "frontend_url": "https://srhu-capture.vercel.app",
+        "frontend_url": "https://campus.example.edu",
         "smtp_from_email": "noreply@srhu.edu.in",
         "_env_file": None,
     }
@@ -142,7 +142,7 @@ class MongoTlsTests(unittest.TestCase):
 
     def test_plain_connections_do_not(self) -> None:
         self.assertFalse(_uses_tls("mongodb://localhost:27017"))
-        self.assertFalse(_uses_tls("mongodb://mongo:pw@mongodb.railway.internal:27017"))
+        self.assertFalse(_uses_tls("mongodb://mongo:pw@mongodb.internal:27017"))
 
 
 if __name__ == "__main__":
